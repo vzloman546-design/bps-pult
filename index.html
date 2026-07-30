@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#111210" media="(prefers-color-scheme: dark)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="БПС Пульт" />
+  <meta name="description" content="Локальный рабочий журнал инженера билетно-пропускной системы" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+  <link rel="stylesheet" href="./styles.css" />
+  <title>БПС Пульт</title>
+</head>
+<body>
+  <div id="offlineBar" class="offline-bar" hidden>Нет сети — приложение работает локально</div>
+
+  <div class="app-shell">
+    <header class="app-header">
+      <div>
+        <div class="eyebrow">БИЛЕТНО-ПРОПУСКНАЯ СИСТЕМА</div>
+        <h1 id="pageTitle">Сегодня</h1>
+      </div>
+      <button class="icon-button" id="themeQuickBtn" aria-label="Переключить тему" title="Тема"></button>
+    </header>
+
+    <main id="appMain" class="app-main" tabindex="-1"></main>
+
+    <nav class="bottom-nav" aria-label="Основная навигация">
+      <button class="nav-button active" data-route="today" aria-label="Сегодня"><span class="nav-icon" data-icon="home"></span><span>Сегодня</span></button>
+      <button class="nav-button" data-route="journal" aria-label="Журнал"><span class="nav-icon" data-icon="journal"></span><span>Журнал</span></button>
+      <button class="record-button" id="recordButton" aria-label="Записать событие"><span data-icon="plus"></span><span>Записать</span></button>
+      <button class="nav-button" data-route="inspections" aria-label="Техосмотры"><span class="nav-icon" data-icon="inspection"></span><span>Осмотры</span></button>
+      <button class="nav-button" data-route="more" aria-label="Ещё"><span class="nav-icon" data-icon="more"></span><span>Ещё</span></button>
+    </nav>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+
+  <template id="modalTemplate">
+    <div class="modal-backdrop" data-modal-backdrop>
+      <section class="modal-sheet" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <header class="modal-header">
+          <button class="text-button" data-modal-close>Отмена</button>
+          <h2 id="modalTitle"></h2>
+          <div class="modal-header-action"></div>
+        </header>
+        <div class="modal-body"></div>
+      </section>
+    </div>
+  </template>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>

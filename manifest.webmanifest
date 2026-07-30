@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "БПС Пульт",
+  "short_name": "БПС",
+  "description": "Локальный рабочий журнал инженера билетно-пропускной системы",
+  "lang": "ru",
+  "start_url": "./#today",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f5f5f4",
+  "theme_color": "#2f6a53",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {"src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
