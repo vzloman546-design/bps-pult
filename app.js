@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.5.1';
 const SCHEMA_VERSION = 5;
 const DB_NAME = 'bps-pult-local';
 const DB_VERSION = 5;
@@ -723,6 +723,11 @@ function setTheme(theme) {
   if (document.body) document.body.style.backgroundColor = color;
   const themeMeta = document.querySelector('meta[name="theme-color"]');
   if (themeMeta) themeMeta.setAttribute('content', color);
+  const iconSuffix = resolved === 'dark' ? 'dark' : 'light';
+  const favicon = document.getElementById('appFavicon');
+  const appleTouchIcon = document.getElementById('appleTouchIcon');
+  if (favicon) favicon.setAttribute('href', `./favicon-${iconSuffix}-32.png?v=2.5.1`);
+  if (appleTouchIcon) appleTouchIcon.setAttribute('href', `./apple-touch-icon-${iconSuffix}.png?v=2.5.1`);
   document.getElementById('themeQuickBtn').innerHTML = icon(resolved === 'dark' ? 'sun' : 'moon');
 }
 async function cycleTheme() {

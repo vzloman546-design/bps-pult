@@ -1,10 +1,13 @@
-// Релиз 2.5.0: активная версия обслуживает только собственный проверенный кэш оболочки.
-const VERSION = '2.5.0';
+// Релиз 2.5.1: активная версия обслуживает только собственный проверенный кэш оболочки.
+const VERSION = '2.5.1';
 const CACHE = `bps-pult-${VERSION}`;
 const APP_SHELL = [
   './', './index.html', './styles.css', './stability-logic.js', './event-logic.js', './knowledge-logic.js', './productivity-logic.js',
-  './app.js', './event-ui.js', './knowledge-ui.js', './manifest.webmanifest', './icon.svg',
-  './icon-192.png', './icon-512.png', './apple-touch-icon.png'
+  './app.js', './event-ui.js', './knowledge-ui.js', './manifest.webmanifest',
+  './icon-192.png', './icon-512.png', './apple-touch-icon.png',
+  './icon-192-dark.png', './icon-512-dark.png', './apple-touch-icon-dark.png',
+  './icon-192-light.png', './icon-512-light.png', './apple-touch-icon-light.png',
+  './favicon-dark-32.png', './favicon-light-32.png', './favicon-dark-64.png', './favicon-light-64.png'
 ];
 
 self.addEventListener('install', event => {

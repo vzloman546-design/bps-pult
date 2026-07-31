@@ -152,7 +152,7 @@ baseData.settings = [{ key:'theme', value:'dark' }];
 
 {
   const encoder = new TextEncoder();
-  const payload = { app:'БПС Пульт', version:'2.5.0', schemaVersion:5, data:structuredClone(baseData) };
+  const payload = { app:'БПС Пульт', version:'2.5.1', schemaVersion:5, data:structuredClone(baseData) };
   payload.data.entries[0].photos = [{ attachment:'attachments/photo.jpg', mime:'image/svg+xml', size:3 }];
   const manifest = { app:'БПС Пульт', backupFormat:2, attachmentCount:1 };
   const archive = S.createZip([

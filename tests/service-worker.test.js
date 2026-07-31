@@ -4,9 +4,9 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const sw=fs.readFileSync(require('node:path').join(__dirname,'..','sw.js'),'utf8');
 const html=fs.readFileSync(require('node:path').join(__dirname,'..','index.html'),'utf8');
-assert.match(sw,/const VERSION = '2\.5\.0'/);
+assert.match(sw,/const VERSION = '2\.5\.1'/);
 for (const asset of ['styles.css','stability-logic.js','event-logic.js','knowledge-logic.js','productivity-logic.js','app.js','event-ui.js','knowledge-ui.js']) {
-  assert.equal(html.includes(`${asset}?v=2.5.0`),true,`${asset} должен иметь версионный URL`);
+  assert.equal(html.includes(`${asset}?v=2.5.1`),true,`${asset} должен иметь версионный URL`);
 }
 const installBlock=sw.slice(sw.indexOf("addEventListener('install'"),sw.indexOf("addEventListener('activate'"));
 assert.doesNotMatch(installBlock,/skipWaiting/,'install не должен принудительно активировать обновление');
@@ -27,7 +27,7 @@ assert.doesNotMatch(sw,/caches\.match\(/,'Активный worker не долж�
   };
   const context={
     URL,
-    caches:{open:async name=>{assert.equal(name,'bps-pult-2.5.0');return cache;},keys:async()=>[],delete:async()=>true},
+    caches:{open:async name=>{assert.equal(name,'bps-pult-2.5.1');return cache;},keys:async()=>[],delete:async()=>true},
     fetch:async()=>{networkCalls++;return {ok:true,clone(){return this;}};},
     self:{
       location:{origin:'https://example.test'},

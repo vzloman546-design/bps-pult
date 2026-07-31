@@ -1,4 +1,4 @@
-# Production checklist — БПС Пульт 2.5.0
+# Production checklist — БПС Пульт 2.5.1
 
 ## Автоматически проверено
 
