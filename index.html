@@ -3,9 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
-  <meta name="theme-color" content="#0e100f" />
+  <meta id="themeColor" name="theme-color" content="#f4f4f2" />
+  <meta name="color-scheme" content="light dark" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="БПС Пульт" />
   <meta name="description" content="Локальный рабочий журнал инженера билетно-пропускной системы" />
   <script>
@@ -13,11 +14,18 @@
       let preference = 'system';
       try { preference = localStorage.getItem('bps-theme') || 'system'; } catch (_) {}
       const dark = preference === 'dark' || (preference === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+      const color = dark ? '#0e100f' : '#f4f4f2';
       document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-      document.documentElement.style.backgroundColor = dark ? '#0e100f' : '#f4f4f2';
+      document.documentElement.style.backgroundColor = color;
+      document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      const themeMeta = document.getElementById('themeColor');
+      if (themeMeta) themeMeta.setAttribute('content', color);
     })();
   </script>
-  <style>html,body{background:#0e100f}</style>
+  <style>
+    html,body{margin:0;background:#f4f4f2}
+    html[data-theme="dark"],html[data-theme="dark"] body{background:#0e100f}
+  </style>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />

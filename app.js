@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 const SCHEMA_VERSION = 1;
 const DB_NAME = 'bps-pult-local';
 const DB_VERSION = 1;
@@ -199,9 +199,12 @@ function setTheme(theme) {
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themePreference = theme;
   try { localStorage.setItem('bps-theme', theme); } catch (_) {}
-  document.documentElement.style.backgroundColor = resolved === 'dark' ? '#0e100f' : '#f4f4f2';
+  const color = resolved === 'dark' ? '#0e100f' : '#f4f4f2';
+  document.documentElement.style.backgroundColor = color;
+  document.documentElement.style.colorScheme = resolved;
+  if (document.body) document.body.style.backgroundColor = color;
   const themeMeta = document.querySelector('meta[name="theme-color"]');
-  if (themeMeta) themeMeta.content = resolved === 'dark' ? '#0e100f' : '#f4f4f2';
+  if (themeMeta) themeMeta.setAttribute('content', color);
   document.getElementById('themeQuickBtn').innerHTML = icon(resolved === 'dark' ? 'sun' : 'moon');
 }
 async function cycleTheme() {

@@ -4,12 +4,12 @@
   "short_name": "БПС",
   "description": "Локальный рабочий журнал инженера билетно-пропускной системы",
   "lang": "ru",
-  "start_url": "./?v=1.1.0#today",
+  "start_url": "./?v=1.2.1#today",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "background_color": "#0e100f",
-  "theme_color": "#0e100f",
+  "background_color": "#f4f4f2",
+  "theme_color": "#f4f4f2",
   "categories": [
     "productivity",
     "utilities"
@@ -27,5 +27,9 @@
       "type": "image/png",
       "purpose": "any maskable"
     }
-  ]
+  ],
+  "color_scheme_dark": {
+    "background_color": "#0e100f",
+    "theme_color": "#0e100f"
+  }
 }
