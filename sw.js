@@ -1,9 +1,9 @@
-// Релиз 2.6.0: активная версия обслуживает только собственный проверенный кэш оболочки.
-const VERSION = '2.6.0';
+// Релиз 2.6.1: восстановление интерфейса и изолированная интеграция Web Push.
+const VERSION = '2.6.1';
 const CACHE = `bps-pult-${VERSION}`;
 const APP_SHELL = [
   './', './index.html', './styles.css', './stability-logic.js', './event-logic.js', './knowledge-logic.js', './productivity-logic.js',
-  './app.js', "./push-notifications.js", './event-ui.js', './knowledge-ui.js', './manifest.webmanifest',
+  './app.js', './push-notifications.js', './push-ui.js', './event-ui.js', './knowledge-ui.js', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './apple-touch-icon.png',
   './icon-192-dark.png', './icon-512-dark.png', './apple-touch-icon-dark.png',
   './icon-192-light.png', './icon-512-light.png', './apple-touch-icon-light.png',
@@ -11,7 +11,7 @@ const APP_SHELL = [
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {
@@ -34,11 +34,13 @@ self.addEventListener('fetch', event => {
   if (event.request.mode === 'navigate') {
     event.respondWith(
       caches.open(CACHE).then(async cache => {
-        const cached = await cache.match('./index.html');
-        if (cached) return cached;
-        const response = await fetch(event.request);
-        if (response.ok) await cache.put('./index.html', response.clone());
-        return response;
+        try {
+          const response = await fetch(event.request, { cache: 'no-store' });
+          if (response.ok) await cache.put('./index.html', response.clone());
+          return response;
+        } catch (_) {
+          return (await cache.match('./index.html')) || Response.error();
+        }
       })
     );
     return;

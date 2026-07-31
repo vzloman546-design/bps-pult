@@ -2,33 +2,36 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const sw=fs.readFileSync(require('node:path').join(__dirname,'..','sw.js'),'utf8');
-const html=fs.readFileSync(require('node:path').join(__dirname,'..','index.html'),'utf8');
-assert.match(sw,/const VERSION = '2\.6\.0'/);
-for (const asset of ['styles.css','stability-logic.js','event-logic.js','knowledge-logic.js','productivity-logic.js','push-notifications.js','app.js','event-ui.js','knowledge-ui.js']) {
-  assert.equal(html.includes(`${asset}?v=2.6.0`),true,`${asset} должен иметь версионный URL`);
+const path=require('node:path');
+const sw=fs.readFileSync(path.join(__dirname,'..','sw.js'),'utf8');
+const html=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
+assert.match(sw,/const VERSION = '2\.6\.1'/);
+for (const asset of ['styles.css','stability-logic.js','event-logic.js','knowledge-logic.js','productivity-logic.js','push-notifications.js','app.js','push-ui.js','event-ui.js','knowledge-ui.js']) {
+  assert.equal(html.includes(`${asset}?v=2.6.1`),true,`${asset} должен иметь версионный URL`);
 }
 const installBlock=sw.slice(sw.indexOf("addEventListener('install'"),sw.indexOf("addEventListener('activate'"));
-assert.doesNotMatch(installBlock,/skipWaiting/,'install не должен принудительно активировать обновление');
+assert.match(installBlock,/skipWaiting/,'Аварийный релиз должен активироваться без зависания сломанной версии');
 assert.match(sw,/event\.data\?\.type === 'SKIP_WAITING'/);
 assert.match(sw,/caches\.keys\(\)/);
 assert.match(sw,/event\.request\.mode === 'navigate'/);
-assert.doesNotMatch(sw,/caches\.match\(/,'Активный worker не должен видеть кэши waiting-версии');
+assert.match(sw,/cache: 'no-store'/,'Навигация должна получать свежий index при наличии сети');
+assert.doesNotMatch(sw,/caches\.match\(/,'Worker не должен читать чужие версии кэша');
 
 (async () => {
   const handlers={};
   let networkCalls=0;
-  const navigationResponse={source:'active-index'};
+  const networkResponse={ok:true,source:'network',clone(){return this;}};
   const assetResponse={source:'active-asset'};
   const cache={
-    match:async request=>typeof request==='string'?navigationResponse:assetResponse,
+    match:async request=>typeof request==='string'?{source:'fallback-index'}:assetResponse,
     put:async()=>{},
     addAll:async()=>{},
   };
   const context={
     URL,
-    caches:{open:async name=>{assert.equal(name,'bps-pult-2.6.0');return cache;},keys:async()=>[],delete:async()=>true},
-    fetch:async()=>{networkCalls++;return {ok:true,clone(){return this;}};},
+    Response:{error:()=>({source:'error'})},
+    caches:{open:async name=>{assert.equal(name,'bps-pult-2.6.1');return cache;},keys:async()=>[],delete:async()=>true},
+    fetch:async()=>{networkCalls++;return networkResponse;},
     self:{
       location:{origin:'https://example.test'},
       clients:{claim:async()=>{}},
@@ -39,9 +42,9 @@ assert.doesNotMatch(sw,/caches\.match\(/,'Активный worker не долж�
   vm.runInNewContext(sw,context);
   let responsePromise;
   handlers.fetch({request:{method:'GET',mode:'navigate',url:'https://example.test/route'},respondWith:value=>{responsePromise=value;}});
-  assert.equal(await responsePromise,navigationResponse,'Навигация должна использовать index активной версии');
+  assert.equal(await responsePromise,networkResponse,'Онлайн-навигация должна использовать свежий index');
   handlers.fetch({request:{method:'GET',mode:'cors',url:'https://example.test/app.js'},respondWith:value=>{responsePromise=value;}});
-  assert.equal(await responsePromise,assetResponse,'Ресурс должен браться только из активного кэша');
-  assert.equal(networkCalls,0,'При заполненном активном кэше сеть не должна смешивать версии');
-  console.log('service-worker: controlled update and cache isolation checks passed');
+  assert.equal(await responsePromise,assetResponse,'Статический ресурс должен браться из активного кэша');
+  assert.equal(networkCalls,1);
+  console.log('service-worker: repair update, navigation and cache checks passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

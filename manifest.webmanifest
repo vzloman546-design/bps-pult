@@ -4,7 +4,7 @@
   "short_name": "БПС",
   "description": "Стабильная офлайн-PWA инженера билетно-пропускной системы",
   "lang": "ru",
-  "start_url": "./?v=2.6.0#today",
+  "start_url": "./?v=2.6.1#today",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",

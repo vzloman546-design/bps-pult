@@ -1782,25 +1782,10 @@ html[data-theme="dark"][data-contrast="high"] {
 }
 
 
-/* Web Push settings */
-.settings-note {
-  margin: var(--space-3) 0 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.45;
-}
-.push-select-row select {
-  width: min(178px, 46vw);
-  min-height: var(--tap-size);
-  margin: 0;
-  justify-self: end;
-}
-@media (max-width: 360px) {
-  .push-select-row {
-    grid-template-columns: 1fr;
-  }
-  .push-select-row select {
-    width: 100%;
-    justify-self: stretch;
-  }
-}
+/* Push UI 2.6.1 — isolated from the core application */
+.push-settings-grid { display:grid; gap:0; margin-top:var(--space-4); border-top:1px solid var(--border); }
+.push-settings-grid label { min-height:64px; display:grid; grid-template-columns:minmax(0,1fr) minmax(132px,180px); align-items:center; gap:12px; border-bottom:1px solid var(--border); }
+.push-settings-grid label > span { font-weight:650; }
+.push-settings-grid select { width:100%; min-height:44px; margin:0; }
+.settings-note { margin:var(--space-3) 0 0; color:var(--text-secondary); font-size:13px; line-height:1.45; }
+@media (max-width:360px) { .push-settings-grid label { grid-template-columns:1fr; padding:12px 0; } }
