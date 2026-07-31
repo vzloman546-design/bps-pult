@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.5.1';
+const APP_VERSION = '2.6.0';
 const SCHEMA_VERSION = 5;
 const DB_NAME = 'bps-pult-local';
 const DB_VERSION = 5;
