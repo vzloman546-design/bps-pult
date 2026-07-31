@@ -285,6 +285,7 @@ function openEventDetail(id) {
       <div class="checklist-groups">${Object.entries(groups).map(([group, items])=>`<div class="checklist-group"><h4>${esc(group)}</h4>${items.map(item=>`<div class="event-check-row ${item.critical?'critical':''}"><span><strong>${esc(item.title)}</strong>${item.critical?'<small>Критический пункт</small>':''}</span><div class="check-status-actions">${['pending','ok','issue','failed','na'].map(status=>checklistStatusButton(item,status)).join('')}</div></div>`).join('')}</div>`).join('')}</div>
     </section>
     <section class="modal-section"><h3 class="modal-section-title">Связанные данные</h3><div class="detail-list"><div><span>Записи журнала</span><strong>${linkedEntries.length}</strong></div><div><span>Задачи</span><strong>${linkedTasks.length}</strong></div></div><div class="button-row"><button class="button" data-new-linked="entry">${icon('journal')}Запись</button><button class="button" data-new-linked="task">${icon('task')}Задача</button></div></section>
+    ${window.knowledgeLinkedArticlesHtml?.(null,event.id)||''}
     <section class="modal-section"><div class="button-row"><button class="button" id="duplicateEvent">${icon('copy')}Копировать</button><button class="button" id="advanceEventStatus">${icon('clock')}${event.status==='planned'?'Начать подготовку':event.status==='preparing'?'Открыть режим проведения':event.status==='live'?'Завершить':'Вернуть в план'}</button></div></section>`;
     bindDetail();
   };
@@ -300,6 +301,8 @@ function openEventDetail(id) {
     }));
     body.querySelector('[data-new-linked="entry"]')?.addEventListener('click', () => { closeModal({immediate:true}); openEntryForm({ eventId:event.id, object:event.gates.find(g=>['active','partial'].includes(g.status))?.name || 'КПП-1', type:'Подготовка мероприятия', status:'Информация', date:nowISO(), photos:[] }); });
     body.querySelector('[data-new-linked="task"]')?.addEventListener('click', () => { closeModal({immediate:true}); openTaskForm({ eventId:event.id, title:`${event.name}: `, object:'', priority:'Обычный' }); });
+    body.querySelectorAll('[data-kb-action="open-article"]').forEach(button=>button.addEventListener('click',()=>{const articleId=button.dataset.id;closeModal({immediate:true});openKnowledgeArticleDetail(articleId);}));
+    bindSwipeRows(body);
     body.querySelector('#duplicateEvent')?.addEventListener('click', () => { closeModal({immediate:true}); duplicateEvent(event); });
     body.querySelector('#advanceEventStatus')?.addEventListener('click', async () => {
       const next = { planned:'preparing', preparing:'live', live:'completed', completed:'planned' }[event.status];

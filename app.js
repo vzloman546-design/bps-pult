@@ -1,10 +1,10 @@
 'use strict';
 
-const APP_VERSION = '2.0.0-alpha.2';
-const SCHEMA_VERSION = 2;
+const APP_VERSION = '2.0.0-alpha.3';
+const SCHEMA_VERSION = 3;
 const DB_NAME = 'bps-pult-local';
-const DB_VERSION = 2;
-const STORE_NAMES = ['entries', 'tasks', 'inspections', 'equipment', 'events', 'settings'];
+const DB_VERSION = 3;
+const STORE_NAMES = ['entries', 'tasks', 'inspections', 'equipment', 'events', 'knowledgeArticles', 'knowledgeCategories', 'settings'];
 
 const ENTRY_TYPES = [
   'Неисправность', 'Выполненная работа', 'Наблюдение', 'Обращение кассира',
@@ -24,7 +24,8 @@ const state = {
   route: 'today',
   journal: { query: '', type: 'Все типы', object: 'Все объекты', status: 'Все статусы', period: 'Все даты' },
   taskFilter: 'Открытые',
-  data: { entries: [], tasks: [], inspections: [], equipment: [], events: [] },
+  knowledge: { query: '', type: 'all', status: 'all', categoryId: null, favorite: false, showAll: false },
+  data: { entries: [], tasks: [], inspections: [], equipment: [], events: [], knowledgeArticles: [], knowledgeCategories: [] },
 };
 
 const interactionState = { modalClosing: false, openSwipeRow: null };
@@ -62,6 +63,12 @@ const iconPaths = {
   wifiOff: '<path d="m2 2 20 20M8.5 8.5A9 9 0 0 1 19 10M5 10a11 11 0 0 1 1.5-1M8 14a6 6 0 0 1 6.5-.9M12 19h.01"/>',
   install: '<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M12 6v9M9 12l3 3 3-3M10 19h4"/>',
   ticket: '<path d="M3 7h18v4a2 2 0 0 0 0 4v4H3v-4a2 2 0 0 0 0-4z"/><path d="M13 7v12"/>',
+  book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5z"/>',
+  folder: '<path d="M3 6h7l2 2h9v11H3z"/>',
+  star: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2-4.5-4.4 6.2-.9z"/>',
+  'star-filled': '<path fill="currentColor" stroke="none" d="m12 2.6 3 6.1 6.7 1-4.8 4.7 1.1 6.7-6-3.2-6 3.2 1.1-6.7-4.8-4.7 6.7-1z"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>',
+  refresh: '<path d="M20 11a8 8 0 0 0-14.8-4L3 10"/><path d="M3 4v6h6M4 13a8 8 0 0 0 14.8 4l2.2-3"/><path d="M21 20v-6h-6"/>',
 };
 
 function icon(name, className = '') {
@@ -148,6 +155,16 @@ function openDatabase() {
         store.createIndex('date', 'date');
         store.createIndex('status', 'status');
       }
+      if (!db.objectStoreNames.contains('knowledgeArticles')) {
+        const store = db.createObjectStore('knowledgeArticles', { keyPath: 'id' });
+        store.createIndex('categoryId', 'categoryId');
+        store.createIndex('status', 'status');
+        store.createIndex('updatedAt', 'updatedAt');
+      }
+      if (!db.objectStoreNames.contains('knowledgeCategories')) {
+        const store = db.createObjectStore('knowledgeCategories', { keyPath: 'id' });
+        store.createIndex('parentId', 'parentId');
+      }
       if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
     };
     request.onsuccess = () => resolve(request.result);
@@ -180,7 +197,7 @@ async function getSetting(key, fallback = null) { const v = await dbGet('setting
 async function setSetting(key, value) { await dbPut('settings', { key, value }); }
 
 async function refreshData() {
-  const [entries, tasks, inspections, equipment, events] = await Promise.all(['entries','tasks','inspections','equipment','events'].map(dbGetAll));
+  const [entries, tasks, inspections, equipment, events, knowledgeArticles, knowledgeCategories] = await Promise.all(['entries','tasks','inspections','equipment','events','knowledgeArticles','knowledgeCategories'].map(dbGetAll));
   state.data.entries = entries.sort((a,b) => new Date(b.date) - new Date(a.date));
   state.data.tasks = tasks.sort((a,b) => {
     if (a.completed !== b.completed) return Number(a.completed) - Number(b.completed);
@@ -189,6 +206,8 @@ async function refreshData() {
   state.data.inspections = inspections.sort((a,b) => new Date(b.date) - new Date(a.date));
   state.data.equipment = equipment.sort((a,b) => a.name.localeCompare(b.name, 'ru'));
   state.data.events = events.sort((a,b) => new Date(a.date || 0) - new Date(b.date || 0));
+  state.data.knowledgeArticles = knowledgeArticles.sort((a,b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  state.data.knowledgeCategories = knowledgeCategories.sort((a,b) => (a.order - b.order) || a.name.localeCompare(b.name, 'ru'));
 }
 
 function toast(message) {
@@ -230,7 +249,7 @@ function updateOnlineStatus() {
 
 const routeTitles = {
   today: 'Сегодня', journal: 'Журнал', inspections: 'Техосмотры', more: 'Ещё',
-  tasks: 'Задачи', events: 'Мероприятия', equipment: 'Оборудование', report: 'Итоги дня', settings: 'Настройки', install: 'Как установить'
+  tasks: 'Задачи', events: 'Мероприятия', knowledge: 'База знаний', equipment: 'Оборудование', report: 'Итоги дня', settings: 'Настройки', install: 'Как установить'
 };
 function go(route) {
   location.hash = route;
@@ -240,7 +259,7 @@ function currentRoute() {
   return routeTitles[value] ? value : 'today';
 }
 function updateNav() {
-  document.querySelectorAll('.nav-button').forEach(btn => btn.classList.toggle('active', btn.dataset.route === state.route || (btn.dataset.route === 'more' && ['tasks','events','equipment','report','settings','install'].includes(state.route))));
+  document.querySelectorAll('.nav-button').forEach(btn => btn.classList.toggle('active', btn.dataset.route === state.route || (btn.dataset.route === 'more' && ['tasks','events','knowledge','equipment','report','settings','install'].includes(state.route))));
 }
 
 async function render() {
@@ -252,7 +271,7 @@ async function render() {
   const main = document.getElementById('appMain');
   const pages = {
     today: renderToday, journal: renderJournal, inspections: renderInspections, more: renderMore,
-    tasks: renderTasks, events: renderEvents, equipment: renderEquipment, report: renderReport, settings: renderSettings, install: renderInstall
+    tasks: renderTasks, events: renderEvents, knowledge: renderKnowledge, equipment: renderEquipment, report: renderReport, settings: renderSettings, install: renderInstall
   };
   const update = async () => {
     main.classList.remove('page-ready');
@@ -280,6 +299,7 @@ function swipeActionsFor(action, id) {
   if (action === 'inspection-detail') return `<button class="swipe-action edit" data-gesture-action="edit-inspection" data-id="${safeId}">${icon('edit')}<span>Изменить</span></button><button class="swipe-action delete" data-gesture-action="delete-inspection" data-id="${safeId}">${icon('trash')}<span>Удалить</span></button>`;
   if (action === 'equipment-detail') return `<button class="swipe-action edit" data-gesture-action="edit-equipment" data-id="${safeId}">${icon('edit')}<span>Изменить</span></button><button class="swipe-action delete" data-gesture-action="delete-equipment" data-id="${safeId}">${icon('trash')}<span>Удалить</span></button>`;
   if (action === 'event-detail') return `<button class="swipe-action edit" data-gesture-action="edit-event" data-id="${safeId}">${icon('edit')}<span>Изменить</span></button><button class="swipe-action delete" data-gesture-action="delete-event" data-id="${safeId}">${icon('trash')}<span>Удалить</span></button>`;
+  if (action === 'knowledge-detail') return `<button class="swipe-action edit" data-gesture-action="edit-knowledge" data-id="${safeId}">${icon('edit')}<span>Изменить</span></button><button class="swipe-action delete" data-gesture-action="delete-knowledge" data-id="${safeId}">${icon('trash')}<span>Удалить</span></button>`;
   return '';
 }
 function swipeRow(content, action, id) {
@@ -432,6 +452,7 @@ function renderMore() {
   const open = state.data.tasks.filter(t=>!t.completed).length;
   return `<section class="section"><div class="list-card">
     ${listRow({id:'events',action:'route',iconName:'calendar',title:'Мероприятия',meta:'Гибкая схема гейтов, турникетов, СИБ и касс',side:state.data.events.length?`${state.data.events.length}`:''})}
+    ${listRow({id:'knowledge',action:'route',iconName:'book',title:'База знаний',meta:'Инструкции, решения, регламенты и личный опыт',side:state.data.knowledgeArticles.length?`${state.data.knowledgeArticles.length}`:''})}
     ${listRow({id:'tasks',action:'route',iconName:'task',title:'Задачи',meta:'Сроки, приоритеты и выполненные работы',side:open?`<span class="status-pill info">${open}</span>`:''})}
     ${listRow({id:'equipment',action:'route',iconName:'equipment',title:'Оборудование',meta:'Локальный реестр турникетов, касс и серверов',side:`${state.data.equipment.length}`})}
     ${listRow({id:'report',action:'route',iconName:'report',title:'Итоги дня',meta:'Готовая хронология для отчёта'})}
@@ -734,9 +755,11 @@ function openEquipmentDetail(id) {
   const needle=(e.designation||e.name).toLowerCase();
   const history=state.data.entries.filter(x=>`${x.equipment} ${x.description}`.toLowerCase().includes(needle));
   const inspections=state.data.inspections.filter(x=>x.equipment.toLowerCase().includes(needle));
-  const node=openModal('Оборудование',`<div class="detail-hero"><span class="status-pill ${statusTone(e.status)}">${esc(e.status)}</span><h3 class="detail-title">${esc(e.name)}</h3><div class="detail-meta">${esc(e.object||'Без объекта')} · ${esc(e.type||'Тип не указан')}</div><div class="detail-grid">${e.designation?`<div class="detail-field"><div class="detail-field-label">Обозначение</div><div class="detail-field-value">${esc(e.designation)}</div></div>`:''}${e.ip?`<div class="detail-field"><div class="detail-field-label">IP-адрес</div><div class="detail-field-value">${esc(e.ip)}</div></div>`:''}${e.serial?`<div class="detail-field"><div class="detail-field-label">Серийный номер</div><div class="detail-field-value">${esc(e.serial)}</div></div>`:''}${e.note?`<div class="detail-field"><div class="detail-field-label">Заметка</div><div class="detail-field-value">${nl2br(e.note)}</div></div>`:''}</div></div><div class="modal-section"><h3 class="modal-section-title">Связанная история</h3>${history.length||inspections.length?`<div class="list-card">${history.slice(0,5).map(entryRow).join('')}${inspections.slice(0,5).map(i=>listRow({id:i.id,action:'inspection-detail',iconName:'inspection',title:i.equipment,meta:`Техосмотр · ${formatDateTime(i.date)}`})).join('')}</div>`:emptyState('journal','История не найдена','Связь определяется по обозначению или названию оборудования.')}</div><button class="button full" id="editEquipment">${icon('edit')}Редактировать</button>`);
+  const node=openModal('Оборудование',`<div class="detail-hero"><span class="status-pill ${statusTone(e.status)}">${esc(e.status)}</span><h3 class="detail-title">${esc(e.name)}</h3><div class="detail-meta">${esc(e.object||'Без объекта')} · ${esc(e.type||'Тип не указан')}</div><div class="detail-grid">${e.designation?`<div class="detail-field"><div class="detail-field-label">Обозначение</div><div class="detail-field-value">${esc(e.designation)}</div></div>`:''}${e.ip?`<div class="detail-field"><div class="detail-field-label">IP-адрес</div><div class="detail-field-value">${esc(e.ip)}</div></div>`:''}${e.serial?`<div class="detail-field"><div class="detail-field-label">Серийный номер</div><div class="detail-field-value">${esc(e.serial)}</div></div>`:''}${e.note?`<div class="detail-field"><div class="detail-field-label">Заметка</div><div class="detail-field-value">${nl2br(e.note)}</div></div>`:''}</div></div><div class="modal-section"><h3 class="modal-section-title">Связанная история</h3>${history.length||inspections.length?`<div class="list-card">${history.slice(0,5).map(entryRow).join('')}${inspections.slice(0,5).map(i=>listRow({id:i.id,action:'inspection-detail',iconName:'inspection',title:i.equipment,meta:`Техосмотр · ${formatDateTime(i.date)}`})).join('')}</div>`:emptyState('journal','История не найдена','Связь определяется по обозначению или названию оборудования.')}</div>${window.knowledgeLinkedArticlesHtml?.(e.id,null)||''}<button class="button full" id="editEquipment">${icon('edit')}Редактировать</button>`);
   node.querySelector('#editEquipment').addEventListener('click',()=>{closeModal();openEquipmentForm(e);});
   node.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>{const action=b.dataset.action,id=b.dataset.id;closeModal();if(action==='entry-detail')openEntryDetail(id);if(action==='inspection-detail')openInspectionDetail(id);}));
+  node.querySelectorAll('[data-kb-action="open-article"]').forEach(button=>button.addEventListener('click',()=>{const articleId=button.dataset.id;closeModal({immediate:true});openKnowledgeArticleDetail(articleId);}));
+  bindSwipeRows(node);
 }
 
 async function exportData() {
@@ -746,12 +769,12 @@ async function exportData() {
 }
 async function importData(file) {
   const text=await file.text();let payload;try{payload=JSON.parse(text);}catch{throw new Error('Файл не является корректным JSON');}
-  if(payload.app!=='БПС Пульт'||!payload.data||![1,2].includes(payload.schemaVersion))throw new Error('Неподдерживаемая резервная копия');
+  if(payload.app!=='БПС Пульт'||!payload.data||![1,2,3].includes(payload.schemaVersion))throw new Error('Неподдерживаемая резервная копия');
   for(const store of STORE_NAMES) await dbClear(store);
   for(const store of STORE_NAMES) for(const item of payload.data[store]||[]) await dbPut(store,item);
-  toast('Данные восстановлены');await applyStoredTheme();await render();
+  if(window.ensureKnowledgeSeed)await window.ensureKnowledgeSeed();toast('Данные восстановлены');await applyStoredTheme();await render();
 }
-async function clearAll() { for(const store of STORE_NAMES)await dbClear(store);await setSetting('theme','system');await applyStoredTheme();toast('Все данные удалены');await render(); }
+async function clearAll() { for(const store of STORE_NAMES)await dbClear(store);if(window.ensureKnowledgeSeed)await window.ensureKnowledgeSeed();await setSetting('theme','system');await applyStoredTheme();toast('Все данные удалены');await render(); }
 async function addSamples() {
   const now=new Date();const tomorrow=new Date(now.getTime()+864e5);const yesterday=new Date(now.getTime()-864e5);
   const samples={
@@ -764,7 +787,8 @@ async function addSamples() {
       {id:'sample_task_2',title:'Получить ответ агрегатора по возврату',object:'Билетный агрегатор',priority:'Обычный',dueAt:null,description:'',completed:false,createdAt:nowISO(),updatedAt:nowISO(),sample:true}
     ],
     equipment:[{id:'sample_equipment_1',name:'Турникет КПП-2 №3',type:'Турникет',object:'КПП-2',designation:'Т-23',status:'Требует внимания',ip:'192.168.2.13',serial:'',note:'Контролировать считыватель QR.',createdAt:nowISO(),updatedAt:nowISO(),sample:true}],
-    inspections:[{id:'sample_inspection_1',object:'КПП-1',equipment:'Турникеты №1–8',date:yesterday.toISOString(),items:INSPECTION_ITEMS.map(name=>({name,status:'good'})),conclusion:'Нарушений не обнаружено.',photos:[],createdAt:nowISO(),updatedAt:nowISO(),sample:true}]
+    inspections:[{id:'sample_inspection_1',object:'КПП-1',equipment:'Турникеты №1–8',date:yesterday.toISOString(),items:INSPECTION_ITEMS.map(name=>({name,status:'good'})),conclusion:'Нарушений не обнаружено.',photos:[],createdAt:nowISO(),updatedAt:nowISO(),sample:true}],
+    knowledgeArticles:[BpsKnowledgeLogic.normalizeArticle({id:'sample_knowledge_1',title:'Ошибка ОФД 32 — первичная диагностика',type:'troubleshooting',categoryId:'kb_cash',summary:'Касса не может передать фискальные данные оператору ОФД.',appliesWhen:'При появлении ошибки ОФД 32 на кассовом рабочем месте.',prerequisites:['Доступ к кассе','Подключение к сети'],steps:['Проверить сетевое подключение кассы','Проверить доступность адреса ОФД','Перезапустить кассовую службу','Выполнить тестовую продажу'],expectedResult:'Чек отправлен в ОФД, билет сформирован и напечатан.',troubleshooting:'Если связь не восстановилась, проверить настройки адреса ОФД и обратиться к подрядчику.',tags:['офд','касса','ошибка 32'],status:'current',favorite:true,lastReviewedAt:nowISO(),createdAt:nowISO(),updatedAt:nowISO(),sample:true})]
   };
   const sampleEvent = BpsEventLogic.createEventFromTemplate('match-no-sib', BpsEventLogic.DEFAULT_RESOURCE_CATALOG, {
     id:'sample_event_1', name:'Матч без СИБ — пример', type:'Матч', date:tomorrow.toISOString(), sample:true
@@ -780,13 +804,13 @@ async function addSamples() {
   for(const [store,items] of Object.entries(samples))for(const item of items)await dbPut(store,item);toast('Примеры добавлены');await render();
 }
 async function removeSamples() {
-  for(const store of ['entries','tasks','inspections','equipment','events']) { const all=await dbGetAll(store);for(const item of all.filter(x=>x.sample))await dbDelete(store,item.id); }
+  for(const store of ['entries','tasks','inspections','equipment','events','knowledgeArticles']) { const all=await dbGetAll(store);for(const item of all.filter(x=>x.sample))await dbDelete(store,item.id); }
   toast('Примеры удалены');await render();
 }
 
 
 function openClearDataModal() {
-  const node = openModal('Удалить все данные', `<div class="warning-box spaced-bottom">Будут безвозвратно удалены все мероприятия, записи, задачи, техосмотры, оборудование и фотографии.</div><div class="field"><label for="clearPhrase">Для подтверждения напишите УДАЛИТЬ</label><input id="clearPhrase" autocomplete="off" autocapitalize="characters" placeholder="УДАЛИТЬ"></div><button class="button danger full" id="clearEverything" disabled>${icon('trash')}Удалить всё</button>`);
+  const node = openModal('Удалить все данные', `<div class="warning-box spaced-bottom">Будут безвозвратно удалены мероприятия, база знаний, записи, задачи, техосмотры, оборудование и фотографии.</div><div class="field"><label for="clearPhrase">Для подтверждения напишите УДАЛИТЬ</label><input id="clearPhrase" autocomplete="off" autocapitalize="characters" placeholder="УДАЛИТЬ"></div><button class="button danger full" id="clearEverything" disabled>${icon('trash')}Удалить всё</button>`);
   const input = node.querySelector('#clearPhrase');
   const button = node.querySelector('#clearEverything');
   input.addEventListener('input', () => { button.disabled = input.value.trim().toUpperCase() !== 'УДАЛИТЬ'; });
@@ -794,7 +818,11 @@ function openClearDataModal() {
 }
 
 async function handleAppAction(action, id) {
-  if(action==='new-event')openEventForm();
+  if(action==='new-knowledge')openKnowledgeArticleForm();
+  else if(action==='knowledge-detail')openKnowledgeArticleDetail(id);
+  else if(action==='edit-knowledge'){const item=state.data.knowledgeArticles.find(x=>x.id===id);if(item)openKnowledgeArticleForm(item);}
+  else if(action==='delete-knowledge')confirmModal('Удалить материал?','Статья и история её изменений будут удалены.','Удалить',async()=>{await dbDelete('knowledgeArticles',id);toast('Материал удалён');await render();},true);
+  else if(action==='new-event')openEventForm();
   else if(action==='event-detail')openEventDetail(id);
   else if(action==='edit-event'){const item=state.data.events.find(x=>x.id===id);if(item)openEventForm(item);}
   else if(action==='duplicate-event'){const item=state.data.events.find(x=>x.id===id);if(item)duplicateEvent(item);}
@@ -859,7 +887,7 @@ function bindEdgeBackGesture() {
   let startX=0,startY=0,pointerId=null;
   addEventListener('pointerdown',e=>{
     if(e.clientX>22||document.querySelector('[data-modal-backdrop]'))return;
-    if(!['tasks','events','equipment','report','settings','install'].includes(state.route))return;
+    if(!['tasks','events','knowledge','equipment','report','settings','install'].includes(state.route))return;
     startX=e.clientX;startY=e.clientY;pointerId=e.pointerId;
   });
   addEventListener('pointerup',e=>{
@@ -882,13 +910,14 @@ function bindPageEvents() {
   main.querySelectorAll('[data-task-filter]').forEach(b=>b.addEventListener('click',()=>{state.taskFilter=b.dataset.taskFilter;render();}));
   main.querySelectorAll('[data-theme-choice]').forEach(b=>b.addEventListener('click',async()=>{await setSetting('theme',b.dataset.themeChoice);setTheme(b.dataset.themeChoice);render();}));
   main.querySelector('#importInput')?.addEventListener('change',e=>{const file=e.target.files?.[0];if(!file)return;confirmModal('Импортировать данные?','Текущие локальные данные будут полностью заменены содержимым резервной копии.','Импортировать',async()=>{try{await importData(file);}catch(err){toast(err.message||'Ошибка импорта');}},false);});
+  window.bindKnowledgePageEvents?.(main);
 }
 function debounce(fn,ms){let t;return(...args)=>{clearTimeout(t);t=setTimeout(()=>fn(...args),ms);};}
 
 async function applyStoredTheme(){const theme=await getSetting('theme','system');setTheme(theme);}
 async function init(){
   if(!('indexedDB' in window)){document.getElementById('appMain').innerHTML=emptyState('alert','IndexedDB недоступна','Этот браузер не поддерживает локальную базу данных. Откройте приложение в Safari.');return;}
-  await openDatabase();await applyStoredTheme();
+  await openDatabase();if(window.ensureKnowledgeSeed)await window.ensureKnowledgeSeed();await applyStoredTheme();
   document.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));
   document.getElementById('themeQuickBtn').addEventListener('click',cycleTheme);
   document.querySelectorAll('.nav-button').forEach(btn=>btn.addEventListener('click',()=>go(btn.dataset.route)));
