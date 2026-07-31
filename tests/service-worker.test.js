@@ -1,0 +1,11 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const sw=fs.readFileSync(require('node:path').join(__dirname,'..','sw.js'),'utf8');
+assert.match(sw,/const VERSION = '2\.0\.0'/);
+const installBlock=sw.slice(sw.indexOf("addEventListener('install'"),sw.indexOf("addEventListener('activate'"));
+assert.doesNotMatch(installBlock,/skipWaiting/,'install не должен принудительно активировать обновление');
+assert.match(sw,/event\.data\?\.type === 'SKIP_WAITING'/);
+assert.match(sw,/caches\.keys\(\)/);
+assert.match(sw,/event\.request\.mode === 'navigate'/);
+console.log('service-worker: controlled update checks passed');

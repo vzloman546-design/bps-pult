@@ -1,10 +1,11 @@
 'use strict';
 
-const APP_VERSION = '2.0.0-alpha.3';
-const SCHEMA_VERSION = 3;
+const APP_VERSION = '2.0.0';
+const SCHEMA_VERSION = 4;
 const DB_NAME = 'bps-pult-local';
-const DB_VERSION = 3;
-const STORE_NAMES = ['entries', 'tasks', 'inspections', 'equipment', 'events', 'knowledgeArticles', 'knowledgeCategories', 'settings'];
+const DB_VERSION = 4;
+const STORE_NAMES = [...BpsStability.DATA_STORES];
+const INTERNAL_STORE_NAMES = ['trash'];
 
 const ENTRY_TYPES = [
   'Неисправность', 'Выполненная работа', 'Наблюдение', 'Обращение кассира',
@@ -28,7 +29,8 @@ const state = {
   data: { entries: [], tasks: [], inspections: [], equipment: [], events: [], knowledgeArticles: [], knowledgeCategories: [] },
 };
 
-const interactionState = { modalClosing: false, openSwipeRow: null };
+const interactionState = { modalClosing: false, openSwipeRow: null, previousFocus: null, modalKeyHandler: null, updateRegistration: null };
+const runtimeErrors = [];
 const prefersReducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const iconPaths = {
@@ -131,10 +133,27 @@ function optionsHtml(items, selected) {
 }
 
 let dbPromise;
+let activeDb = null;
+let lastStorageError = null;
+
+function storageError(error, fallback = 'Ошибка локального хранилища') {
+  const source = error || {};
+  const quota = source.name === 'QuotaExceededError' || source.name === 'NS_ERROR_DOM_QUOTA_REACHED';
+  const message = quota
+    ? 'Недостаточно свободного места. Создайте резервную копию и удалите ненужные фотографии.'
+    : (source.message || fallback);
+  const wrapped = new Error(message);
+  wrapped.name = source.name || 'StorageError';
+  wrapped.cause = source;
+  lastStorageError = wrapped;
+  return wrapped;
+}
+
 function openDatabase() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
+    let settled = false;
     request.onupgradeneeded = event => {
       const db = event.target.result;
       if (!db.objectStoreNames.contains('entries')) {
@@ -152,49 +171,133 @@ function openDatabase() {
       if (!db.objectStoreNames.contains('equipment')) db.createObjectStore('equipment', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('events')) {
         const store = db.createObjectStore('events', { keyPath: 'id' });
-        store.createIndex('date', 'date');
-        store.createIndex('status', 'status');
+        store.createIndex('date', 'date'); store.createIndex('status', 'status');
       }
       if (!db.objectStoreNames.contains('knowledgeArticles')) {
         const store = db.createObjectStore('knowledgeArticles', { keyPath: 'id' });
-        store.createIndex('categoryId', 'categoryId');
-        store.createIndex('status', 'status');
-        store.createIndex('updatedAt', 'updatedAt');
+        store.createIndex('categoryId', 'categoryId'); store.createIndex('status', 'status'); store.createIndex('updatedAt', 'updatedAt');
       }
       if (!db.objectStoreNames.contains('knowledgeCategories')) {
         const store = db.createObjectStore('knowledgeCategories', { keyPath: 'id' });
         store.createIndex('parentId', 'parentId');
       }
       if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
+      if (!db.objectStoreNames.contains('trash')) {
+        const store = db.createObjectStore('trash', { keyPath: 'id' });
+        store.createIndex('expiresAt', 'expiresAt');
+      }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onblocked = () => {
+      window.dispatchEvent(new CustomEvent('bps-db-blocked'));
+      if (!settled) { settled = true; dbPromise = null; reject(storageError({ name: 'BlockedError', message: 'Обновление базы заблокировано другой вкладкой. Закройте БПС Пульт во всех вкладках и повторите.' })); }
+    };
+    request.onsuccess = () => {
+      if (settled) { request.result.close(); return; }
+      settled = true;
+      activeDb = request.result;
+      activeDb.onversionchange = () => {
+        activeDb.close(); activeDb = null; dbPromise = null;
+        window.dispatchEvent(new CustomEvent('bps-db-versionchange'));
+      };
+      activeDb.onerror = event => { lastStorageError = storageError(event.target?.error || activeDb.error); };
+      resolve(activeDb);
+    };
+    request.onerror = () => {
+      if (settled) return;
+      settled = true; dbPromise = null; reject(storageError(request.error, 'Не удалось открыть локальную базу.'));
+    };
   });
   return dbPromise;
 }
-async function storeAction(storeName, mode, action) {
+
+async function runTransaction(storeNames, mode, executor) {
   const db = await openDatabase();
+  const names = [...new Set(Array.isArray(storeNames) ? storeNames : [storeNames])];
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, mode);
-    const store = tx.objectStore(storeName);
     let result;
-    try { result = action(store); } catch (error) { reject(error); return; }
-    if (result && typeof result.onsuccess !== 'undefined') {
-      result.onsuccess = () => resolve(result.result);
-      result.onerror = () => reject(result.error);
-    } else {
-      tx.oncomplete = () => resolve(result);
-      tx.onerror = () => reject(tx.error);
+    let failed = false;
+    let tx;
+    try { tx = db.transaction(names, mode, { durability: mode === 'readwrite' ? 'strict' : 'default' }); }
+    catch (error) {
+      try { tx = db.transaction(names, mode); } catch (fallbackError) { reject(storageError(fallbackError)); return; }
+    }
+    const stores = Object.fromEntries(names.map(name => [name, tx.objectStore(name)]));
+    tx.oncomplete = () => { if (!failed) resolve(result); };
+    tx.onerror = () => { failed = true; reject(storageError(tx.error)); };
+    tx.onabort = () => { failed = true; reject(storageError(tx.error || new DOMException('Транзакция отменена', 'AbortError'))); };
+    try {
+      result = executor(stores, tx, value => { result = value; });
+      if (result && typeof result.onsuccess !== 'undefined') result.onsuccess = () => { result = result.result; };
+    } catch (error) {
+      failed = true;
+      try { tx.abort(); } catch (_) {}
+      reject(storageError(error));
     }
   });
 }
+
+async function storeAction(storeName, mode, action) {
+  let requestResult;
+  await runTransaction(storeName, mode, stores => {
+    const request = action(stores[storeName]);
+    if (request && typeof request.onsuccess !== 'undefined') request.onsuccess = () => { requestResult = request.result; };
+  });
+  return requestResult;
+}
+function noteDataChange(store) {
+  if (store === 'settings' || store === 'trash') return;
+  try { localStorage.setItem('bps-last-data-change', nowISO()); } catch (_) {}
+}
 const dbGetAll = store => storeAction(store, 'readonly', s => s.getAll());
 const dbGet = (store, id) => storeAction(store, 'readonly', s => s.get(id));
-const dbPut = (store, value) => storeAction(store, 'readwrite', s => s.put(value));
-const dbDelete = (store, id) => storeAction(store, 'readwrite', s => s.delete(id));
-const dbClear = store => storeAction(store, 'readwrite', s => s.clear());
+async function dbPut(store, value) { const result = await storeAction(store, 'readwrite', s => s.put(value)); noteDataChange(store); return result; }
+async function dbDelete(store, id) { const result = await storeAction(store, 'readwrite', s => s.delete(id)); noteDataChange(store); return result; }
+async function dbClear(store) { const result = await storeAction(store, 'readwrite', s => s.clear()); noteDataChange(store); return result; }
 async function getSetting(key, fallback = null) { const v = await dbGet('settings', key); return v ? v.value : fallback; }
-async function setSetting(key, value) { await dbPut('settings', { key, value }); }
+async function setSetting(key, value) { await storeAction('settings', 'readwrite', s => s.put({ key, value })); }
+
+async function getAllData() {
+  const result = {};
+  const rows = await Promise.all(STORE_NAMES.map(dbGetAll));
+  STORE_NAMES.forEach((store, index) => { result[store] = rows[index]; });
+  return result;
+}
+
+async function atomicReplaceData(data, { clearTrash = true } = {}) {
+  const names = clearTrash ? [...STORE_NAMES, 'trash'] : STORE_NAMES;
+  await runTransaction(names, 'readwrite', stores => {
+    for (const store of STORE_NAMES) {
+      stores[store].clear();
+      for (const item of data[store] || []) stores[store].put(item);
+    }
+    if (clearTrash) stores.trash.clear();
+  });
+  noteDataChange('import');
+}
+
+async function atomicMergeData(importedData) {
+  const current = await getAllData();
+  const merged = BpsStability.mergeData(current, importedData);
+  await atomicReplaceData(merged, { clearTrash: false });
+}
+
+async function runLiveMigrations() {
+  const storedSchema = Number(await getSetting('dataSchemaVersion', 1)) || 1;
+  if (storedSchema >= SCHEMA_VERSION) return [];
+  const current = await getAllData();
+  const migrated = BpsStability.migratePayload({ app: 'БПС Пульт', version: APP_VERSION, schemaVersion: Math.min(storedSchema, SCHEMA_VERSION), data: current });
+  await atomicReplaceData(migrated.data, { clearTrash: false });
+  return migrated.migrations;
+}
+
+async function cleanupTrash() {
+  const items = await dbGetAll('trash');
+  const now = Date.now();
+  const expired = items.filter(item => new Date(item.expiresAt || 0).getTime() <= now);
+  if (!expired.length) return;
+  await runTransaction('trash', 'readwrite', stores => expired.forEach(item => stores.trash.delete(item.id)));
+}
+
 
 async function refreshData() {
   const [entries, tasks, inspections, equipment, events, knowledgeArticles, knowledgeCategories] = await Promise.all(['entries','tasks','inspections','equipment','events','knowledgeArticles','knowledgeCategories'].map(dbGetAll));
@@ -210,12 +313,87 @@ async function refreshData() {
   state.data.knowledgeCategories = knowledgeCategories.sort((a,b) => (a.order - b.order) || a.name.localeCompare(b.name, 'ru'));
 }
 
-function toast(message) {
+function toast(message, options = {}) {
   const root = document.getElementById('toastRoot');
-  root.innerHTML = `<div class="toast">${esc(message)}</div>`;
+  const action = options.actionText ? `<button type="button" class="toast-action">${esc(options.actionText)}</button>` : '';
+  root.innerHTML = `<div class="toast"><span>${esc(message)}</span>${action}</div>`;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => { root.innerHTML = ''; }, 2600);
+  const close = () => { root.innerHTML = ''; };
+  root.querySelector('.toast-action')?.addEventListener('click', async () => {
+    clearTimeout(toast.timer);
+    try { await options.onAction?.(); } finally { close(); }
+  });
+  toast.timer = setTimeout(close, Number(options.duration || 4200));
 }
+
+async function restoreTrashItem(trashId) {
+  const item = await dbGet('trash', trashId);
+  if (!item?.record || !item.store) return false;
+  const related = Array.isArray(item.related) ? item.related : [];
+  const storeNames = [item.store, 'trash', ...related.map(change => change.store)];
+  await runTransaction(storeNames, 'readwrite', stores => {
+    stores[item.store].put(item.record);
+    related.forEach(change => stores[change.store].put(change.before));
+    stores.trash.delete(trashId);
+  });
+  noteDataChange(item.store);
+  await render();
+  return true;
+}
+
+async function softDelete(store, id, label = 'Объект', related = []) {
+  const value = await dbGet(store, id);
+  if (!value) return false;
+  const cleanRelated = related.filter(change => change?.store && change?.before && change?.after);
+  const trashId = `trash_${store}_${id}_${Date.now().toString(36)}`;
+  const trashItem = {
+    id: trashId,
+    store,
+    record: value,
+    related: cleanRelated.map(change => ({ store:change.store, before:change.before })),
+    label,
+    deletedAt: nowISO(),
+    expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+  };
+  const storeNames = [store, 'trash', ...cleanRelated.map(change => change.store)];
+  await runTransaction(storeNames, 'readwrite', stores => {
+    stores[store].delete(id);
+    cleanRelated.forEach(change => stores[change.store].put(change.after));
+    stores.trash.put(trashItem);
+  });
+  noteDataChange(store);
+  await render();
+  toast(`${label} удалён`, {
+    actionText: 'Отменить',
+    duration: 8000,
+    onAction: async () => {
+      if (await restoreTrashItem(trashId)) toast(`${label} восстановлен`);
+    },
+  });
+  return true;
+}
+
+async function deleteEntryWithUndo(id) {
+  const related = state.data.tasks.filter(item => item.linkedEntryId === id).map(before => ({
+    store:'tasks', before, after:{...before, linkedEntryId:null, updatedAt:nowISO()}
+  }));
+  return softDelete('entries', id, 'Запись', related);
+}
+async function deleteEventWithUndo(id) {
+  const related = [];
+  state.data.entries.filter(item=>item.eventId===id).forEach(before=>related.push({store:'entries',before,after:{...before,eventId:null,updatedAt:nowISO()}}));
+  state.data.tasks.filter(item=>item.eventId===id).forEach(before=>related.push({store:'tasks',before,after:{...before,eventId:null,updatedAt:nowISO()}}));
+  state.data.inspections.filter(item=>item.eventId===id).forEach(before=>related.push({store:'inspections',before,after:{...before,eventId:null,updatedAt:nowISO()}}));
+  state.data.knowledgeArticles.filter(item=>(item.linkedEventIds||[]).includes(id)).forEach(before=>related.push({store:'knowledgeArticles',before,after:{...before,linkedEventIds:before.linkedEventIds.filter(value=>value!==id),updatedAt:nowISO()}}));
+  return softDelete('events', id, 'Мероприятие', related);
+}
+async function deleteEquipmentWithUndo(id) {
+  const related = state.data.knowledgeArticles.filter(item=>(item.linkedEquipmentIds||[]).includes(id)).map(before=>({
+    store:'knowledgeArticles', before, after:{...before,linkedEquipmentIds:before.linkedEquipmentIds.filter(value=>value!==id),updatedAt:nowISO()}
+  }));
+  return softDelete('equipment', id, 'Оборудование', related);
+}
+
 
 function setTheme(theme) {
   const resolved = theme === 'system'
@@ -329,6 +507,12 @@ async function renderToday() {
   const greeting = hour < 6 ? 'Доброй ночи' : hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер';
   const todayLabel = formatDate(new Date(), { weekday:'long', day:'numeric', month:'long' });
   const install = !isStandalone() ? `<div class="section"><div class="inline-notice"><span class="inline-notice-icon">${icon('install')}</span><span><strong>Установить на iPhone</strong><small>Работает офлайн после первого запуска</small></span><button class="text-button" data-route-link="install">Открыть</button></div></div>` : '';
+  const lastBackupAt = await getSetting('lastBackupAt', null);
+  const backupDays = daysSince(lastBackupAt);
+  const hasData = entries.length + tasks.length + inspections.length + state.data.equipment.length + state.data.events.length + state.data.knowledgeArticles.length > 0;
+  const backupNotice = hasData && (backupDays === null || backupDays >= 14)
+    ? `<div class="section"><div class="inline-notice warning"><span class="inline-notice-icon">${icon('download')}</span><span><strong>${backupDays===null?'Нет резервной копии':'Копия старше 14 дней'}</strong><small>Создайте проверяемый архив в настройках</small></span><button class="text-button" data-route-link="settings">Открыть</button></div></div>`
+    : '';
   return `
     <section class="today-intro">
       <div class="today-greeting">${greeting}, Артём</div>
@@ -336,6 +520,7 @@ async function renderToday() {
       <div class="local-state">${icon('database')} Данные хранятся только на этом iPhone</div>
     </section>
     ${install}
+    ${backupNotice}
     ${renderNextEventSection()}
     <section class="section">
       <div class="status-strip" aria-label="Сводка">
@@ -508,10 +693,22 @@ function renderReport() {
 }
 
 async function storageInfo() {
-  if (!navigator.storage?.estimate) return { text:'Недоступно', percent:0 };
-  const e = await navigator.storage.estimate();
-  const usage = e.usage || 0, quota = e.quota || 0;
-  return { usage, quota, percent: quota ? Math.min(100, usage/quota*100) : 0, text:`${formatBytes(usage)} из ${formatBytes(quota)}` };
+  const result = { usage: 0, quota: 0, percent: 0, text: 'Недоступно', persisted: false, warning: null };
+  if (navigator.storage?.estimate) {
+    try {
+      const estimate = await navigator.storage.estimate();
+      result.usage = estimate.usage || 0;
+      result.quota = estimate.quota || 0;
+      result.percent = result.quota ? Math.min(100, result.usage / result.quota * 100) : 0;
+      result.text = `${formatBytes(result.usage)} из ${formatBytes(result.quota)}`;
+      if (result.percent >= 85) result.warning = 'Хранилище заполнено более чем на 85%. Срочно создайте резервную копию и удалите ненужные фотографии.';
+      else if (result.percent >= 70) result.warning = 'Хранилище заполнено более чем на 70%. Проверьте резервную копию.';
+    } catch (_) {}
+  }
+  if (navigator.storage?.persisted) {
+    try { result.persisted = await navigator.storage.persisted(); } catch (_) {}
+  }
+  return result;
 }
 function formatBytes(bytes) {
   if (!bytes) return '0 Б';
@@ -519,13 +716,42 @@ function formatBytes(bytes) {
   while(n>=1024 && i<units.length-1){n/=1024;i++;}
   return `${n.toFixed(i?1:0)} ${units[i]}`;
 }
+function daysSince(value) {
+  const time = new Date(value || 0).getTime();
+  return Number.isFinite(time) && time > 0 ? Math.floor((Date.now() - time) / 86400000) : null;
+}
+function latestDataChange() {
+  const values = STORE_NAMES.filter(store => store !== 'settings').flatMap(store => state.data[store] || []);
+  const timestamps = values.map(item => new Date(item.updatedAt || item.createdAt || item.date || 0).getTime()).filter(Number.isFinite);
+  try {
+    const local = new Date(localStorage.getItem('bps-last-data-change') || 0).getTime();
+    if (Number.isFinite(local)) timestamps.push(local);
+  } catch (_) {}
+  return timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : null;
+}
+async function requestStoragePersistence() {
+  if (!navigator.storage?.persist) throw new Error('Запрос постоянного хранения не поддерживается этим браузером.');
+  const granted = await navigator.storage.persist();
+  await setSetting('storagePersistenceRequestedAt', nowISO());
+  toast(granted ? 'Постоянное хранение разрешено' : 'iOS не предоставила гарантию постоянного хранения');
+  await render();
+  return granted;
+}
 async function renderSettings() {
   const theme = await getSetting('theme','system');
-  const s = await storageInfo();
+  const storage = await storageInfo();
+  const trashCount = (await dbGetAll('trash')).length;
+  const lastBackupAt = await getSetting('lastBackupAt', null);
+  const backupDays = daysSince(lastBackupAt);
+  const changedAt = latestDataChange();
+  const changedAfterBackup = changedAt && (!lastBackupAt || new Date(changedAt) > new Date(lastBackupAt));
+  const backupTone = backupDays === null || backupDays >= 14 ? 'danger' : backupDays >= 7 || changedAfterBackup ? 'warning' : 'success';
+  const backupText = lastBackupAt ? `${formatFullDate(lastBackupAt)}${changedAfterBackup ? ' · есть новые изменения' : ''}` : 'Ещё не создавалась';
+  const storageWarning = storage.warning ? `<div class="warning-box spaced-bottom">${esc(storage.warning)}</div>` : '';
   return `<section class="section"><div class="section-head"><div><h2 class="section-title">Внешний вид</h2></div></div><div class="card"><div class="field flush"><label>Тема приложения</label><div class="segmented">${['system','light','dark'].map(t=>`<button class="segment-button ${t===theme?'active':''}" data-theme-choice="${t}">${{system:'Системная',light:'Светлая',dark:'Тёмная'}[t]}</button>`).join('')}</div></div></div></section>
-    <section class="section"><div class="section-head"><div><h2 class="section-title">Локальное хранилище</h2><p class="section-subtitle">Данные находятся только на этом устройстве</p></div></div><div class="card"><div class="data-stat"><span>Использовано</span><strong>${s.text}</strong></div><div class="data-stat"><span>Записи</span><strong>${state.data.entries.length}</strong></div><div class="data-stat"><span>Задачи</span><strong>${state.data.tasks.length}</strong></div><div class="data-stat"><span>Техосмотры</span><strong>${state.data.inspections.length}</strong></div><div class="data-stat"><span>Оборудование</span><strong>${state.data.equipment.length}</strong></div><div class="progress-bar progress-spaced"><div class="progress-fill" style="width:${s.percent}%"></div></div></div></section>
-    <section class="section"><div class="section-head"><div><h2 class="section-title">Резервная копия</h2></div></div><div class="warning-box">Удаление PWA, очистка данных Safari или сброс iPhone могут удалить журнал. Экспортируйте резервную копию после важных изменений.</div><div class="button-row spaced"><button class="button" data-action="export-data">${icon('download')}Экспорт JSON</button><label class="button primary file-button">${icon('upload')}Импорт JSON<input id="importInput" type="file" accept="application/json,.json" hidden></label></div></section>
-    <section class="section"><div class="section-head"><div><h2 class="section-title">Тестирование</h2></div></div><div class="button-row"><button class="button" data-action="add-samples">Добавить примеры</button><button class="button" data-action="remove-samples">Удалить примеры</button></div></section>
+    <section class="section"><div class="section-head"><div><h2 class="section-title">Локальное хранилище</h2><p class="section-subtitle">Данные находятся только на этом устройстве</p></div></div>${storageWarning}<div class="card"><div class="data-stat"><span>Использовано</span><strong>${storage.text}</strong></div><div class="data-stat"><span>Защита хранения</span><strong class="status-text ${storage.persisted?'success':'warning'}">${storage.persisted?'Постоянное':'Не гарантировано'}</strong></div><div class="data-stat"><span>Корзина</span><strong>${trashCount} объектов</strong></div><div class="progress-bar progress-spaced"><div class="progress-fill" style="width:${storage.percent}%"></div></div>${!storage.persisted?`<button class="button full spaced-top" data-action="request-persistence">Запросить постоянное хранение</button>`:''}${trashCount?`<button class="button full spaced-top" data-action="empty-trash">Очистить корзину сейчас</button>`:''}</div></section>
+    <section class="section"><div class="section-head"><div><h2 class="section-title">Резервная копия</h2><p class="section-subtitle">Проверяемый архив с отдельными вложениями</p></div></div><div class="card"><div class="data-stat"><span>Последняя копия</span><strong class="status-text ${backupTone}">${esc(backupText)}</strong></div><div class="data-stat"><span>Формат</span><strong>BPSBACKUP v2</strong></div></div><div class="button-row spaced"><button class="button" data-action="export-data">${icon('download')}Создать архив</button><label class="button primary file-button">${icon('upload')}Восстановить<input id="importInput" type="file" accept=".bpsbackup,.zip,.json,application/json,application/zip" hidden></label></div></section>
+    <section class="section"><div class="section-head"><div><h2 class="section-title">Надёжность</h2></div></div><div class="list-card"><button class="list-row" data-action="check-integrity"><span class="row-icon">${icon('check')}</span><span class="list-row-main"><span class="list-row-title">Проверить целостность базы</span><span class="list-row-meta">Связи, идентификаторы, даты и конфигурации</span></span><span class="list-row-chevron">${icon('chevron')}</span></button><button class="list-row" data-action="download-diagnostic"><span class="row-icon">${icon('report')}</span><span class="list-row-main"><span class="list-row-title">Диагностический отчёт</span><span class="list-row-meta">Без текстов записей и рабочих данных</span></span><span class="list-row-chevron">${icon('download')}</span></button></div></section>
     <section class="section"><div class="danger-zone"><h3>Удалить все данные</h3><p>Действие нельзя отменить без резервной копии.</p><button class="button danger full" data-action="clear-data">${icon('trash')}Очистить приложение</button></div></section>
     <section class="section"><div class="card"><div class="data-stat"><span>Версия</span><strong>${APP_VERSION}</strong></div><div class="data-stat"><span>Схема данных</span><strong>${SCHEMA_VERSION}</strong></div><div class="data-stat"><span>Режим</span><strong>${isStandalone()?'Установлено':'Safari'}</strong></div></div></section>`;
 }
@@ -537,8 +763,21 @@ function renderInstall() {
     <section class="section"><div class="card notice-card"><div class="notice-icon">${icon('alert')}</div><div><h3>Важно о данных</h3><p>Записи хранятся локально. Перед удалением приложения сделайте экспорт JSON в разделе «Настройки и данные».</p></div></div></section>`;
 }
 
+function modalFocusable(node) {
+  return [...node.querySelectorAll('button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+    .filter(element => element.offsetParent !== null && !element.closest('[hidden]'));
+}
+function setBackgroundInert(value) {
+  for (const selector of ['.app-shell', '.bottom-nav', '#offlineBar', '#updateBar']) {
+    const element = document.querySelector(selector);
+    if (!element) continue;
+    element.inert = value;
+    if (value) element.setAttribute('aria-hidden', 'true'); else element.removeAttribute('aria-hidden');
+  }
+}
 function openModal(title, bodyHtml, options = {}) {
-  if (document.querySelector('[data-modal-backdrop]')) closeModal({ immediate: true });
+  if (document.querySelector('[data-modal-backdrop]')) closeModal({ immediate: true, restoreFocus: false });
+  interactionState.previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const template = document.getElementById('modalTemplate');
   const node = template.content.firstElementChild.cloneNode(true);
   node.querySelector('#modalTitle').textContent = title;
@@ -547,16 +786,28 @@ function openModal(title, bodyHtml, options = {}) {
   document.getElementById('modalRoot').replaceChildren(node);
   document.body.style.overflow = 'hidden';
   document.body.classList.add('sheet-open');
+  setBackgroundInert(true);
   interactionState.modalClosing = false;
   node.querySelectorAll('[data-modal-close]').forEach(btn=>btn.addEventListener('click',()=>closeModal()));
-  node.addEventListener('click', e=>{ if(e.target.matches('[data-modal-backdrop]')) closeModal(); });
+  node.addEventListener('click', e=>{ if(e.target.matches('[data-modal-backdrop]') && options.dismissible !== false) closeModal(); });
   setupSheetGestures(node);
   options.onOpen?.(node);
+  interactionState.modalKeyHandler = event => {
+    if (event.key === 'Escape' && options.dismissible !== false) { event.preventDefault(); closeModal(); return; }
+    if (event.key !== 'Tab') return;
+    const focusable = modalFocusable(node);
+    if (!focusable.length) { event.preventDefault(); node.querySelector('[data-sheet]')?.focus(); return; }
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  };
+  document.addEventListener('keydown', interactionState.modalKeyHandler, true);
   requestAnimationFrame(()=>{
     node.classList.add('visible');
-    if (matchMedia('(min-width: 700px)').matches) {
-      node.querySelector('.modal-body input:not([type="file"]), .modal-body select, .modal-body textarea')?.focus({preventScroll:true});
-    }
+    const target = options.initialFocus
+      ? node.querySelector(options.initialFocus)
+      : node.querySelector('[data-modal-close], .modal-header-action button, .modal-body button, .modal-body input, .modal-body select, .modal-body textarea');
+    target?.focus({preventScroll:true});
   });
   return node;
 }
@@ -564,11 +815,17 @@ function closeModal(options = {}) {
   const node = document.querySelector('[data-modal-backdrop]');
   if (!node || interactionState.modalClosing) return;
   interactionState.modalClosing = true;
+  const previousFocus = interactionState.previousFocus;
   const finish = () => {
+    if (interactionState.modalKeyHandler) document.removeEventListener('keydown', interactionState.modalKeyHandler, true);
+    interactionState.modalKeyHandler = null;
     document.getElementById('modalRoot').innerHTML='';
     document.body.style.overflow='';
     document.body.classList.remove('sheet-open');
+    setBackgroundInert(false);
     interactionState.modalClosing = false;
+    interactionState.previousFocus = null;
+    if (options.restoreFocus !== false && previousFocus?.isConnected) previousFocus.focus({preventScroll:true});
   };
   if (options.immediate || prefersReducedMotion()) return finish();
   node.classList.add('closing');
@@ -628,23 +885,53 @@ function confirmModal(title, message, confirmText, onConfirm, dangerous = false)
 function photoPickerHtml(photos) {
   return `<div class="photo-grid" id="photoGrid">${photos.map((p,i)=>`<div class="photo-thumb"><img src="${p}" alt="Фото ${i+1}"><button type="button" class="photo-remove" data-remove-photo="${i}" aria-label="Удалить фото">${icon('close')}</button></div>`).join('')}${photos.length<3?`<label class="photo-add">${icon('camera')}<input type="file" id="photoInput" accept="image/*" multiple></label>`:''}</div><div class="field-help">До 3 фотографий. Они сжимаются и сохраняются только на устройстве.</div>`;
 }
-async function compressImage(file) {
-  if (!file.type.startsWith('image/')) throw new Error('Выбранный файл не является изображением');
-  const fallback = () => new Promise((resolve,reject)=>{ const r=new FileReader(); r.onload=()=>resolve(r.result); r.onerror=()=>reject(r.error); r.readAsDataURL(file); });
+async function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('Не удалось прочитать изображение.'));
+    reader.readAsDataURL(blob);
+  });
+}
+function canvasToBlob(canvas, quality) {
+  return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Не удалось сжать изображение.')), 'image/jpeg', quality));
+}
+async function decodeImage(file) {
+  if ('createImageBitmap' in window) {
+    try { return await createImageBitmap(file); } catch (_) {}
+  }
+  const url = URL.createObjectURL(file);
   try {
-    let bitmap;
-    if ('createImageBitmap' in window) bitmap = await createImageBitmap(file);
-    else {
-      const url=URL.createObjectURL(file); const img=new Image();
-      await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=url;});
-      bitmap=img; URL.revokeObjectURL(url);
-    }
-    const max=1600, scale=Math.min(1,max/Math.max(bitmap.width,bitmap.height));
-    const canvas=document.createElement('canvas'); canvas.width=Math.max(1,Math.round(bitmap.width*scale)); canvas.height=Math.max(1,Math.round(bitmap.height*scale));
-    canvas.getContext('2d',{alpha:false}).drawImage(bitmap,0,0,canvas.width,canvas.height);
-    bitmap.close?.();
-    return canvas.toDataURL('image/jpeg',.76);
-  } catch { return fallback(); }
+    const image = new Image();
+    image.decoding = 'async';
+    await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error('Формат изображения не поддерживается.')); image.src = url; });
+    return image;
+  } finally { URL.revokeObjectURL(url); }
+}
+async function compressImage(file) {
+  const MAX_SOURCE = 12 * 1024 * 1024;
+  const MAX_OUTPUT = 1400 * 1024;
+  if (!file.type.startsWith('image/')) throw new Error('Выбранный файл не является изображением.');
+  if (file.size > MAX_SOURCE) throw new Error('Фотография больше 12 МБ. Уменьшите её перед добавлением.');
+  const bitmap = await decodeImage(file);
+  let maxSide = 1600;
+  let quality = .82;
+  let output = null;
+  for (let attempt = 0; attempt < 7; attempt++) {
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d', { alpha: false });
+    context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    output = await canvasToBlob(canvas, quality);
+    if (output.size <= MAX_OUTPUT) break;
+    if (quality > .58) quality -= .08; else maxSide = Math.max(900, Math.round(maxSide * .82));
+  }
+  bitmap.close?.();
+  if (!output || output.size > MAX_OUTPUT) throw new Error('Не удалось уменьшить фотографию до безопасного размера.');
+  return blobToDataUrl(output);
 }
 async function handlePhotoFiles(files, photos, rerender) {
   for (const file of [...files].slice(0,3-photos.length)) {
@@ -688,7 +975,7 @@ function openEntryForm(existing = null) {
     }
     closeModal();toast(existing?.id?'Запись обновлена':'Запись сохранена');await render();
   });
-  node.querySelector('[data-delete-entry]')?.addEventListener('click',()=>confirmModal('Удалить запись?','Фотографии и связанные данные записи будут удалены.','Удалить',async()=>{await dbDelete('entries',existing.id);closeModal();toast('Запись удалена');await render();},true));
+  node.querySelector('[data-delete-entry]')?.addEventListener('click',async()=>{closeModal({immediate:true});await deleteEntryWithUndo(existing.id);});
 }
 
 function openEntryDetail(id) {
@@ -708,7 +995,7 @@ function openTaskForm(existing = null) {
     await dbPut('tasks',{id:preset.id||uid('task'),title:node.querySelector('#taskTitle').value.trim(),object:node.querySelector('#taskObject').value,priority:node.querySelector('#taskPriority').value,dueAt:node.querySelector('#taskDue').value?new Date(node.querySelector('#taskDue').value).toISOString():null,description:node.querySelector('#taskDescription').value.trim(),completed:preset.completed||false,completedAt:preset.completedAt||null,eventId:node.querySelector('#linkedEvent')?.value||null,linkedEntryId:preset.linkedEntryId||null,createdAt:preset.createdAt||nowISO(),updatedAt:nowISO(),sample:preset.sample||false});
     closeModal();toast(preset.id?'Задача обновлена':'Задача создана');await render();
   });
-  node.querySelector('[data-delete-task]')?.addEventListener('click',()=>confirmModal('Удалить задачу?','Задача будет удалена без возможности восстановления.','Удалить',async()=>{await dbDelete('tasks',preset.id);closeModal();toast('Задача удалена');await render();},true));
+  node.querySelector('[data-delete-task]')?.addEventListener('click',async()=>{closeModal({immediate:true});await softDelete('tasks',preset.id,'Задача');});
 }
 function openTaskDetail(id) {
   const t=state.data.tasks.find(x=>x.id===id);if(!t)return;
@@ -734,7 +1021,7 @@ function openInspectionForm(existing = null) {
     if(sw.classList.contains('on')&&issues.length) await dbPut('tasks',{id:uid('task'),title:`Устранить замечания: ${record.equipment}`,object:record.object,priority:'Важный',dueAt:null,description:`Замечания: ${issues.map(x=>x.name).join(', ')}.${record.conclusion?`\n${record.conclusion}`:''}`,completed:false,eventId:record.eventId||null,linkedInspectionId:record.id,createdAt:nowISO(),updatedAt:nowISO()});
     closeModal();toast(existing?'Осмотр обновлён':'Техосмотр сохранён');await render();
   });
-  node.querySelector('[data-delete-inspection]')?.addEventListener('click',()=>confirmModal('Удалить техосмотр?','Запись техосмотра и его фотографии будут удалены.','Удалить',async()=>{await dbDelete('inspections',existing.id);closeModal();toast('Осмотр удалён');await render();},true));
+  node.querySelector('[data-delete-inspection]')?.addEventListener('click',async()=>{closeModal({immediate:true});await softDelete('inspections',existing.id,'Техосмотр');});
 }
 function openInspectionDetail(id) {
   const i=state.data.inspections.find(x=>x.id===id);if(!i)return;
@@ -748,7 +1035,7 @@ function openEquipmentForm(existing = null) {
   const body=`<form id="equipmentForm"><div class="field"><label class="required" for="equipmentName">Название</label><input id="equipmentName" required value="${esc(e.name||'')}" placeholder="Например: Турникет КПП-1 №3"></div><div class="form-grid two"><div class="field"><label for="equipmentType">Тип</label><input id="equipmentType" value="${esc(e.type||'')}" placeholder="Турникет, касса, сервер"></div><div class="field"><label for="equipmentObject">Объект</label><select id="equipmentObject"><option value="">Без объекта</option>${optionsHtml(OBJECTS,e.object||'')}</select></div><div class="field"><label for="equipmentDesignation">Номер / обозначение</label><input id="equipmentDesignation" value="${esc(e.designation||'')}" placeholder="Т-03"></div><div class="field"><label for="equipmentStatus">Статус</label><select id="equipmentStatus">${optionsHtml(EQUIPMENT_STATUSES,e.status||'Работает')}</select></div><div class="field"><label for="equipmentIp">IP-адрес</label><input id="equipmentIp" inputmode="decimal" value="${esc(e.ip||'')}" placeholder="192.168.0.10"></div><div class="field"><label for="equipmentSerial">Серийный номер</label><input id="equipmentSerial" value="${esc(e.serial||'')}"></div></div><div class="field"><label for="equipmentNote">Заметка</label><textarea id="equipmentNote">${esc(e.note||'')}</textarea></div>${e.id?`<button type="button" class="button danger full" data-delete-equipment="${esc(e.id)}">${icon('trash')}Удалить оборудование</button>`:''}</form>`;
   const node=openModal(e.id?'Редактировать':'Новое оборудование',body,{actionHtml:'<button class="text-button" id="saveEquipment">Сохранить</button>'});
   node.querySelector('#saveEquipment').addEventListener('click',async()=>{const form=node.querySelector('#equipmentForm');if(!form.reportValidity())return;await dbPut('equipment',{id:e.id||uid('equipment'),name:node.querySelector('#equipmentName').value.trim(),type:node.querySelector('#equipmentType').value.trim(),object:node.querySelector('#equipmentObject').value,designation:node.querySelector('#equipmentDesignation').value.trim(),status:node.querySelector('#equipmentStatus').value,ip:node.querySelector('#equipmentIp').value.trim(),serial:node.querySelector('#equipmentSerial').value.trim(),note:node.querySelector('#equipmentNote').value.trim(),createdAt:e.createdAt||nowISO(),updatedAt:nowISO(),sample:e.sample||false});closeModal();toast(e.id?'Оборудование обновлено':'Оборудование добавлено');await render();});
-  node.querySelector('[data-delete-equipment]')?.addEventListener('click',()=>confirmModal('Удалить оборудование?','Карточка будет удалена. Записи журнала и осмотры останутся.','Удалить',async()=>{await dbDelete('equipment',e.id);closeModal();toast('Оборудование удалено');await render();},true));
+  node.querySelector('[data-delete-equipment]')?.addEventListener('click',async()=>{closeModal({immediate:true});await deleteEquipmentWithUndo(e.id);});
 }
 function openEquipmentDetail(id) {
   const e=state.data.equipment.find(x=>x.id===id);if(!e)return;
@@ -762,19 +1049,111 @@ function openEquipmentDetail(id) {
   bindSwipeRows(node);
 }
 
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url; anchor.download = filename;
+  document.body.appendChild(anchor); anchor.click(); anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+async function saveUserFile(blob, filename, title = 'Файл БПС Пульта') {
+  const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+  if (navigator.share && navigator.canShare?.({ files:[file] })) {
+    try { await navigator.share({ title, files:[file] }); return true; }
+    catch (error) { if (error?.name === 'AbortError') return false; }
+  }
+  downloadBlob(blob, filename); return true;
+}
 async function exportData() {
-  const data = {}; for (const store of STORE_NAMES) data[store] = await dbGetAll(store);
-  const payload={app:'БПС Пульт',version:APP_VERSION,schemaVersion:SCHEMA_VERSION,exportedAt:nowISO(),data};
-  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`bps-pult-backup-${dayKey(new Date())}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Резервная копия создана');
+  const data = await getAllData();
+  const integrity = BpsStability.checkIntegrity(data);
+  if (integrity.errors.length) throw new Error('Перед экспортом обнаружены критические ошибки целостности. Запустите проверку базы.');
+  const archive = BpsStability.buildBackupArchive(data, { version: APP_VERSION });
+  if (archive.bytes.length > 120 * 1024 * 1024) throw new Error('Резервная копия больше 120 МБ. Удалите ненужные фотографии и повторите.');
+  const blob = new Blob([archive.bytes], { type: 'application/zip' });
+  const saved = await saveUserFile(blob, `БПС-Пульт-backup-${dayKey(new Date())}.bpsbackup`, 'Резервная копия БПС Пульта');
+  if (!saved) { toast('Сохранение отменено'); return; }
+  await setSetting('lastBackupAt', archive.manifest.exportedAt);
+  await setSetting('lastBackupCounts', archive.manifest.counts);
+  toast('Резервная копия создана');
+  if (state.route === 'settings') await render();
 }
-async function importData(file) {
-  const text=await file.text();let payload;try{payload=JSON.parse(text);}catch{throw new Error('Файл не является корректным JSON');}
-  if(payload.app!=='БПС Пульт'||!payload.data||![1,2,3].includes(payload.schemaVersion))throw new Error('Неподдерживаемая резервная копия');
-  for(const store of STORE_NAMES) await dbClear(store);
-  for(const store of STORE_NAMES) for(const item of payload.data[store]||[]) await dbPut(store,item);
-  if(window.ensureKnowledgeSeed)await window.ensureKnowledgeSeed();toast('Данные восстановлены');await applyStoredTheme();await render();
+
+async function readBackupFile(file) {
+  if (!file) throw new Error('Файл не выбран.');
+  if (file.size > 120 * 1024 * 1024) throw new Error('Архив больше 120 МБ и не может быть обработан безопасно.');
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let payload;
+  let manifest = null;
+  const looksLikeZip = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
+  if (looksLikeZip) {
+    const unpacked = BpsStability.readBackupArchive(bytes);
+    payload = unpacked.payload; manifest = unpacked.manifest;
+  } else {
+    let parsed;
+    try { parsed = JSON.parse(new TextDecoder().decode(bytes)); }
+    catch (_) { throw new Error('Файл не является корректным архивом или JSON.'); }
+    payload = parsed;
+  }
+  const validation = BpsStability.validatePayload(payload);
+  if (!validation.valid) throw new Error(`Архив не прошёл проверку: ${validation.errors[0] || 'неизвестная ошибка'}`);
+  return { validation, manifest };
 }
-async function clearAll() { for(const store of STORE_NAMES)await dbClear(store);if(window.ensureKnowledgeSeed)await window.ensureKnowledgeSeed();await setSetting('theme','system');await applyStoredTheme();toast('Все данные удалены');await render(); }
+
+async function importValidatedData(validation, mode) {
+  if (mode === 'merge') await atomicMergeData(validation.payload.data);
+  else await atomicReplaceData(validation.payload.data);
+  await setSetting('dataSchemaVersion', SCHEMA_VERSION);
+  await setSetting('lastImportAt', nowISO());
+  if (window.ensureKnowledgeSeed) await window.ensureKnowledgeSeed();
+  await applyStoredTheme();
+  await render();
+}
+
+async function openImportPreview(file) {
+  let loaded;
+  try { loaded = await readBackupFile(file); }
+  catch (error) { toast(error.message || 'Не удалось прочитать архив'); return; }
+  const current = await getAllData();
+  const preview = BpsStability.previewImport(loaded.validation.payload.data, current);
+  const counts = loaded.validation.counts;
+  const countLabels = { entries:'Записи',tasks:'Задачи',inspections:'Осмотры',equipment:'Оборудование',events:'Мероприятия',knowledgeArticles:'Материалы',knowledgeCategories:'Разделы',settings:'Настройки' };
+  const countRows = Object.entries(counts).filter(([,value])=>value).map(([store,value])=>`<div class="data-stat"><span>${countLabels[store]||store}</span><strong>${value}</strong></div>`).join('');
+  const warnings = loaded.validation.warnings.slice(0,5).map(message=>`<li>${esc(message)}</li>`).join('');
+  const archiveMeta = loaded.manifest ? `<div class="info-box spaced">Создан: ${esc(formatFullDate(loaded.manifest.exportedAt))} · вложений: ${Number(loaded.manifest.attachmentCount||0)}</div>` : '<div class="info-box spaced">Старая JSON-копия будет преобразована в стабильную схему.</div>';
+  const body = `<div class="card">${countRows || '<p>Архив не содержит пользовательских данных.</p>'}</div>${archiveMeta}
+    ${loaded.validation.payload.migrations.length?`<div class="info-box spaced">Будет выполнена миграция схемы ${esc(loaded.validation.payload.migrations.join(', '))}.</div>`:''}
+    ${warnings?`<div class="warning-box spaced"><strong>Предупреждения проверки</strong><ul class="compact-list">${warnings}</ul></div>`:''}
+    <div class="field spaced"><label>Режим восстановления</label><div class="segmented import-mode"><button type="button" class="segment-button active" data-import-mode="replace">Заменить</button><button type="button" class="segment-button" data-import-mode="merge">Объединить</button></div><div class="field-help" id="importModeHelp">Текущая база будет атомарно заменена. При ошибке старые данные сохранятся.</div></div>
+    <div class="info-box">Совпадающих идентификаторов с текущей базой: ${preview.duplicateTotal}.</div>
+    <button type="button" class="button primary full spaced-top" id="performImport">Восстановить данные</button>`;
+  const node = openModal('Проверка резервной копии', body, { dismissible: true });
+  let mode = 'replace';
+  node.querySelectorAll('[data-import-mode]').forEach(button => button.addEventListener('click', () => {
+    mode = button.dataset.importMode;
+    node.querySelectorAll('[data-import-mode]').forEach(item=>item.classList.toggle('active',item===button));
+    node.querySelector('#importModeHelp').textContent = mode === 'replace'
+      ? 'Текущая база будет атомарно заменена. При ошибке старые данные сохранятся.'
+      : 'Записи будут объединены по идентификаторам. Более новая версия совпавшей записи получит приоритет.';
+  }));
+  node.querySelector('#performImport').addEventListener('click', async event => {
+    const button = event.currentTarget; button.disabled = true; button.textContent = 'Восстановление…';
+    try {
+      await importValidatedData(loaded.validation, mode);
+      closeModal({ immediate:true });
+      toast('Данные успешно восстановлены');
+    } catch (error) {
+      button.disabled = false; button.textContent = 'Повторить восстановление';
+      toast(error.message || 'Ошибка восстановления');
+    }
+  });
+}
+
+async function clearAll() {
+  await runTransaction([...STORE_NAMES, 'trash'], 'readwrite', stores => { [...STORE_NAMES, 'trash'].forEach(store => stores[store].clear()); });
+  if(window.ensureKnowledgeSeed)await window.ensureKnowledgeSeed();
+  await setSetting('theme','system');await setSetting('dataSchemaVersion',SCHEMA_VERSION);await applyStoredTheme();toast('Все данные удалены');await render();
+}
 async function addSamples() {
   const now=new Date();const tomorrow=new Date(now.getTime()+864e5);const yesterday=new Date(now.getTime()-864e5);
   const samples={
@@ -809,6 +1188,57 @@ async function removeSamples() {
 }
 
 
+async function createDiagnostic(error = lastStorageError, phase = 'manual') {
+  let counts = {};
+  try { counts = BpsStability.countStores(await getAllData()); } catch (_) {}
+  const storage = await storageInfo();
+  return BpsStability.sanitizeDiagnostic(error || new Error('Диагностика запрошена вручную'), {
+    version: APP_VERSION,
+    schemaVersion: SCHEMA_VERSION,
+    phase,
+    userAgent: navigator.userAgent,
+    standalone: isStandalone(),
+    online: navigator.onLine,
+    persisted: storage.persisted,
+    storageUsage: storage.usage,
+    storageQuota: storage.quota,
+    counts,
+  });
+}
+async function downloadDiagnostic(error = null, phase = 'manual') {
+  const report = await createDiagnostic(error, phase);
+  report.recentErrors = runtimeErrors.slice(-5).map(item => ({ name:item.name, message:item.message, phase:item.phase, at:item.at }));
+  downloadBlob(new Blob([JSON.stringify(report, null, 2)], { type:'application/json' }), `БПС-Пульт-diagnostic-${dayKey(new Date())}.json`);
+  toast('Диагностический отчёт создан');
+}
+async function runIntegrityAudit() {
+  const report = BpsStability.checkIntegrity(await getAllData());
+  await setSetting('lastIntegrityCheckAt', report.checkedAt);
+  const issues = [...report.errors, ...report.warnings];
+  const rows = issues.slice(0, 30).map(item => `<div class="integrity-row ${item.severity}"><span>${icon(item.severity==='error'?'alert':'info')}</span><span>${esc(item.message)}</span></div>`).join('');
+  const body = `<div class="summary-strip"><div><b>${Object.values(report.counts).reduce((sum,value)=>sum+value,0)}</b><span>объектов</span></div><div><b>${report.errors.length}</b><span>ошибок</span></div><div><b>${report.warnings.length}</b><span>предупр.</span></div></div>
+    ${rows || '<div class="success-box spaced">Ошибок и потерянных связей не найдено.</div>'}
+    ${issues.length>30?`<div class="field-help">Показаны первые 30 замечаний.</div>`:''}
+    <button class="button full spaced-top" id="downloadIntegrity">${icon('download')}Скачать отчёт</button>`;
+  const node = openModal('Проверка целостности', body);
+  node.querySelector('#downloadIntegrity').addEventListener('click', () => downloadBlob(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}),`БПС-Пульт-integrity-${dayKey(new Date())}.json`));
+  return report;
+}
+function rememberRuntimeError(error, phase = 'runtime') {
+  const safe = { name:error?.name||'Error', message:String(error?.message||error||'Неизвестная ошибка').slice(0,300), phase, at:nowISO() };
+  runtimeErrors.push(safe); if(runtimeErrors.length>20)runtimeErrors.shift();
+}
+async function renderFatalError(error, phase = 'init') {
+  rememberRuntimeError(error, phase);
+  document.body.classList.add('fatal-state');
+  const main = document.getElementById('appMain');
+  main.innerHTML = `<section class="fatal-card" role="alert"><div class="fatal-icon">${icon('alert')}</div><h2>Не удалось открыть приложение</h2><p>Ваши данные не были очищены. Не удаляйте PWA и не очищайте Safari.</p><div class="error-code">${esc(error?.name||'Error')}: ${esc(error?.message||'Неизвестная ошибка')}</div><div class="button-stack"><button class="button primary full" id="fatalRetry">Повторить запуск</button><button class="button full" id="fatalDiagnostic">Скачать диагностику</button><label class="button full file-button">Восстановить из копии<input id="fatalImport" type="file" accept=".bpsbackup,.zip,.json" hidden></label></div></section>`;
+  document.getElementById('fatalRetry').addEventListener('click',()=>location.reload());
+  document.getElementById('fatalDiagnostic').addEventListener('click',()=>downloadDiagnostic(error,phase));
+  document.getElementById('fatalImport').addEventListener('change',event=>{const file=event.target.files?.[0];if(file)openImportPreview(file);});
+}
+
+
 function openClearDataModal() {
   const node = openModal('Удалить все данные', `<div class="warning-box spaced-bottom">Будут безвозвратно удалены мероприятия, база знаний, записи, задачи, техосмотры, оборудование и фотографии.</div><div class="field"><label for="clearPhrase">Для подтверждения напишите УДАЛИТЬ</label><input id="clearPhrase" autocomplete="off" autocapitalize="characters" placeholder="УДАЛИТЬ"></div><button class="button danger full" id="clearEverything" disabled>${icon('trash')}Удалить всё</button>`);
   const input = node.querySelector('#clearPhrase');
@@ -821,12 +1251,12 @@ async function handleAppAction(action, id) {
   if(action==='new-knowledge')openKnowledgeArticleForm();
   else if(action==='knowledge-detail')openKnowledgeArticleDetail(id);
   else if(action==='edit-knowledge'){const item=state.data.knowledgeArticles.find(x=>x.id===id);if(item)openKnowledgeArticleForm(item);}
-  else if(action==='delete-knowledge')confirmModal('Удалить материал?','Статья и история её изменений будут удалены.','Удалить',async()=>{await dbDelete('knowledgeArticles',id);toast('Материал удалён');await render();},true);
+  else if(action==='delete-knowledge')await softDelete('knowledgeArticles',id,'Материал');
   else if(action==='new-event')openEventForm();
   else if(action==='event-detail')openEventDetail(id);
   else if(action==='edit-event'){const item=state.data.events.find(x=>x.id===id);if(item)openEventForm(item);}
   else if(action==='duplicate-event'){const item=state.data.events.find(x=>x.id===id);if(item)duplicateEvent(item);}
-  else if(action==='delete-event')confirmModal('Удалить мероприятие?','Конфигурация и чек-лист мероприятия будут удалены. Связанные записи и задачи останутся.','Удалить',async()=>{await dbDelete('events',id);toast('Мероприятие удалено');await render();},true);
+  else if(action==='delete-event')confirmModal('Удалить мероприятие?','Конфигурация и чек-лист мероприятия будут удалены. Связанные записи и задачи останутся.','Удалить',async()=>{await deleteEventWithUndo(id);},true);
   else if(action==='new-entry')openEntryForm();
   else if(action==='new-task')openTaskForm();
   else if(action==='new-inspection')openInspectionForm();
@@ -839,14 +1269,18 @@ async function handleAppAction(action, id) {
   else if(action==='edit-task'){const item=state.data.tasks.find(x=>x.id===id);if(item)openTaskForm(item);}
   else if(action==='edit-inspection'){const item=state.data.inspections.find(x=>x.id===id);if(item)openInspectionForm(item);}
   else if(action==='edit-equipment'){const item=state.data.equipment.find(x=>x.id===id);if(item)openEquipmentForm(item);}
-  else if(action==='delete-entry')confirmModal('Удалить запись?','Фотографии и связанные данные записи будут удалены.','Удалить',async()=>{await dbDelete('entries',id);toast('Запись удалена');await render();},true);
-  else if(action==='delete-inspection')confirmModal('Удалить техосмотр?','Запись техосмотра и фотографии будут удалены.','Удалить',async()=>{await dbDelete('inspections',id);toast('Осмотр удалён');await render();},true);
-  else if(action==='delete-equipment')confirmModal('Удалить оборудование?','Карточка будет удалена. Журнал и осмотры останутся.','Удалить',async()=>{await dbDelete('equipment',id);toast('Оборудование удалено');await render();},true);
+  else if(action==='delete-entry')await deleteEntryWithUndo(id);
+  else if(action==='delete-inspection')await softDelete('inspections',id,'Техосмотр');
+  else if(action==='delete-equipment')await deleteEquipmentWithUndo(id);
   else if(action==='route')go(id);
   else if(action==='toggle-task'){const t=state.data.tasks.find(x=>x.id===id);if(t){t.completed=!t.completed;t.completedAt=t.completed?nowISO():null;t.updatedAt=nowISO();await dbPut('tasks',t);toast(t.completed?'Задача выполнена':'Задача возвращена');await render();}}
   else if(action==='copy-report'){await navigator.clipboard.writeText(buildDailyReport());toast('Отчёт скопирован');}
   else if(action==='share-report'){const text=buildDailyReport();if(navigator.share)await navigator.share({title:'Итоги рабочего дня',text});else{await navigator.clipboard.writeText(text);toast('Web Share недоступен — текст скопирован');}}
-  else if(action==='export-data')await exportData();
+  else if(action==='export-data'){try{await exportData();}catch(error){toast(error.message||'Ошибка экспорта');}}
+  else if(action==='request-persistence'){try{await requestStoragePersistence();}catch(error){toast(error.message||'Не удалось запросить хранение');}}
+  else if(action==='empty-trash')confirmModal('Очистить корзину?','Удалённые объекты больше нельзя будет восстановить.','Очистить',async()=>{await dbClear('trash');toast('Корзина очищена');await render();},true);
+  else if(action==='check-integrity')await runIntegrityAudit();
+  else if(action==='download-diagnostic')await downloadDiagnostic();
   else if(action==='add-samples')await addSamples();
   else if(action==='remove-samples')await removeSamples();
   else if(action==='clear-data')openClearDataModal();
@@ -909,26 +1343,84 @@ function bindPageEvents() {
   [['journalType','type'],['journalObject','object'],['journalStatus','status'],['journalPeriod','period']].forEach(([id,key])=>main.querySelector(`#${id}`)?.addEventListener('change',e=>{state.journal[key]=e.target.value;render();}));
   main.querySelectorAll('[data-task-filter]').forEach(b=>b.addEventListener('click',()=>{state.taskFilter=b.dataset.taskFilter;render();}));
   main.querySelectorAll('[data-theme-choice]').forEach(b=>b.addEventListener('click',async()=>{await setSetting('theme',b.dataset.themeChoice);setTheme(b.dataset.themeChoice);render();}));
-  main.querySelector('#importInput')?.addEventListener('change',e=>{const file=e.target.files?.[0];if(!file)return;confirmModal('Импортировать данные?','Текущие локальные данные будут полностью заменены содержимым резервной копии.','Импортировать',async()=>{try{await importData(file);}catch(err){toast(err.message||'Ошибка импорта');}},false);});
+  main.querySelector('#importInput')?.addEventListener('change',e=>{const file=e.target.files?.[0];if(file)openImportPreview(file);e.target.value='';});
   window.bindKnowledgePageEvents?.(main);
 }
+
+function showUpdateAvailable(registration) {
+  interactionState.updateRegistration = registration;
+  const bar = document.getElementById('updateBar');
+  if (!bar) return;
+  bar.hidden = false;
+  document.body.classList.add('update-available');
+}
+async function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return null;
+  const registration = await navigator.serviceWorker.register('./sw.js', { scope:'./' });
+  interactionState.updateRegistration = registration;
+  if (registration.waiting && navigator.serviceWorker.controller) showUpdateAvailable(registration);
+  registration.addEventListener('updatefound', () => {
+    const worker = registration.installing;
+    worker?.addEventListener('statechange', () => {
+      if (worker.state === 'installed' && navigator.serviceWorker.controller) showUpdateAvailable(registration);
+    });
+  });
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloading || !sessionStorage.getItem('bps-update-requested')) return;
+    reloading = true; sessionStorage.removeItem('bps-update-requested'); location.reload();
+  });
+  document.getElementById('applyUpdate')?.addEventListener('click', async () => {
+    const waiting = interactionState.updateRegistration?.waiting;
+    if (!waiting) { toast('Обновление ещё загружается'); return; }
+    sessionStorage.setItem('bps-update-requested','1');
+    waiting.postMessage({ type:'SKIP_WAITING' });
+  });
+  document.getElementById('dismissUpdate')?.addEventListener('click', () => {
+    document.getElementById('updateBar').hidden = true;
+    document.body.classList.remove('update-available');
+  });
+  try { await registration.update(); } catch (_) {}
+  return registration;
+}
+
 function debounce(fn,ms){let t;return(...args)=>{clearTimeout(t);t=setTimeout(()=>fn(...args),ms);};}
 
 async function applyStoredTheme(){const theme=await getSetting('theme','system');setTheme(theme);}
 async function init(){
-  if(!('indexedDB' in window)){document.getElementById('appMain').innerHTML=emptyState('alert','IndexedDB недоступна','Этот браузер не поддерживает локальную базу данных. Откройте приложение в Safari.');return;}
-  await openDatabase();if(window.ensureKnowledgeSeed)await window.ensureKnowledgeSeed();await applyStoredTheme();
-  document.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));
-  document.getElementById('themeQuickBtn').addEventListener('click',cycleTheme);
-  document.querySelectorAll('.nav-button').forEach(btn=>btn.addEventListener('click',()=>go(btn.dataset.route)));
-  document.getElementById('recordButton').addEventListener('click',()=>openEntryForm());
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
-  document.addEventListener('pointerdown',e=>{if(interactionState.openSwipeRow&&!e.target.closest('[data-swipe-row]'))closeOpenSwipeRow();});
-  bindEdgeBackGesture();
-  addEventListener('hashchange',render);addEventListener('online',updateOnlineStatus);addEventListener('offline',updateOnlineStatus);updateOnlineStatus();
-  matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',async()=>{if(await getSetting('theme','system')==='system'){setTheme('system');}});
-  if('serviceWorker' in navigator){try{await navigator.serviceWorker.register('./sw.js',{scope:'./'});}catch(e){console.warn('Service worker registration failed',e);}}
-  await render();
+  try {
+    if(!('indexedDB' in window)) throw new Error('IndexedDB недоступна. Откройте приложение в Safari.');
+    await openDatabase();
+    await runLiveMigrations();
+    await cleanupTrash();
+    if(window.ensureKnowledgeSeed)await window.ensureKnowledgeSeed();
+    await applyStoredTheme();
+    document.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));
+    document.getElementById('themeQuickBtn').addEventListener('click',cycleTheme);
+    document.querySelectorAll('.nav-button').forEach(btn=>btn.addEventListener('click',()=>go(btn.dataset.route)));
+    document.getElementById('recordButton').addEventListener('click',()=>openEntryForm());
+    document.addEventListener('pointerdown',e=>{if(interactionState.openSwipeRow&&!e.target.closest('[data-swipe-row]'))closeOpenSwipeRow();});
+    bindEdgeBackGesture();
+    addEventListener('hashchange',render);addEventListener('online',updateOnlineStatus);addEventListener('offline',updateOnlineStatus);updateOnlineStatus();
+    addEventListener('bps-db-blocked',()=>toast('Закройте другие вкладки БПС Пульта для обновления базы',{duration:8000}));
+    addEventListener('bps-db-versionchange',()=>{toast('База обновлена в другой вкладке. Приложение будет перезапущено.',{duration:3000});setTimeout(()=>location.reload(),1000);});
+    matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',async()=>{if(await getSetting('theme','system')==='system'){setTheme('system');}});
+    await render();
+    await registerServiceWorker();
+    const storage = await storageInfo();
+    if (!storage.persisted && isStandalone()) console.info('Persistent storage is not guaranteed');
+  } catch (error) {
+    await renderFatalError(error, 'init');
+  }
 }
+
+window.addEventListener('error', event => {
+  rememberRuntimeError(event.error || new Error(event.message), 'window.error');
+});
+window.addEventListener('unhandledrejection', event => {
+  const error = event.reason instanceof Error ? event.reason : new Error(String(event.reason || 'Unhandled rejection'));
+  rememberRuntimeError(error, 'unhandledrejection');
+  if (document.readyState === 'complete') toast(error.message || 'Непредвиденная ошибка');
+});
 
 document.addEventListener('DOMContentLoaded',init);

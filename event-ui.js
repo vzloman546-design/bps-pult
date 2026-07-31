@@ -220,7 +220,7 @@ function openEventEditor(initialDraft, isExisting) {
     node.querySelectorAll('[data-add-assignment]').forEach(button => button.addEventListener('click', () => { syncBasicFields(); syncAssignments(); const desk = draft.cashDesks.find(item => item.id === button.dataset.addAssignment); desk.assignments.push({ id:uid('assignment'), person:'', from:'', to:'' }); renderEditor(); }));
     node.querySelectorAll('[data-remove-assignment]').forEach(button => button.addEventListener('click', () => { syncBasicFields(); syncAssignments(); const desk = draft.cashDesks.find(item => item.id === expandedCashId); desk.assignments.splice(Number(button.dataset.removeAssignment), 1); renderEditor(); }));
     node.querySelectorAll('[data-assignment-person],[data-assignment-from],[data-assignment-to]').forEach(input => input.addEventListener('input', syncAssignments));
-    node.querySelector('[data-delete-event]')?.addEventListener('click', () => confirmModal('Удалить мероприятие?','Конфигурация и чек-лист будут удалены. Связанные записи и задачи останутся.','Удалить',async()=>{await dbDelete('events',draft.id);closeModal({immediate:true});toast('Мероприятие удалено');await render();},true));
+    node.querySelector('[data-delete-event]')?.addEventListener('click', () => confirmModal('Удалить мероприятие?','Конфигурация и чек-лист будут перемещены в корзину. Связанные записи и задачи останутся.','Удалить',async()=>{closeModal({immediate:true});await deleteEventWithUndo(draft.id);},true));
   }
 
   function syncAssignments() {

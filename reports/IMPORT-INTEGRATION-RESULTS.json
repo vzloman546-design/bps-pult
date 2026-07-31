@@ -1,0 +1,13 @@
+{
+  "replaceIds": [
+    "imported"
+  ],
+  "merge": {},
+  "corruptRejected": true,
+  "afterCorruptCount": 3,
+  "mergeRows": {
+    "imported": "from backup",
+    "newer": "local newer",
+    "second": "second"
+  }
+}

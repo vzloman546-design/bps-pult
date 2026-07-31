@@ -1,0 +1,132 @@
+{
+  "routes": {
+    "today": {
+      "scrollWidth": 390,
+      "innerWidth": 390,
+      "smallTargets": [],
+      "mainLeft": 0,
+      "navBottom": 0
+    },
+    "journal": {
+      "scrollWidth": 390,
+      "innerWidth": 390,
+      "smallTargets": [],
+      "mainLeft": 0,
+      "navBottom": 0
+    },
+    "inspections": {
+      "scrollWidth": 390,
+      "innerWidth": 390,
+      "smallTargets": [],
+      "mainLeft": 0,
+      "navBottom": 0
+    },
+    "more": {
+      "scrollWidth": 390,
+      "innerWidth": 390,
+      "smallTargets": [],
+      "mainLeft": 0,
+      "navBottom": 0
+    },
+    "tasks": {
+      "scrollWidth": 390,
+      "innerWidth": 390,
+      "smallTargets": [],
+      "mainLeft": 0,
+      "navBottom": 0
+    },
+    "events": {
+      "scrollWidth": 390,
+      "innerWidth": 390,
+      "smallTargets": [],
+      "mainLeft": 0,
+      "navBottom": 0
+    },
+    "knowledge": {
+      "scrollWidth": 390,
+      "innerWidth": 390,
+      "smallTargets": [],
+      "mainLeft": 0,
+      "navBottom": 0
+    },
+    "equipment": {
+      "scrollWidth": 390,
+      "innerWidth": 390,
+      "smallTargets": [],
+      "mainLeft": 0,
+      "navBottom": 0
+    },
+    "report": {
+      "scrollWidth": 390,
+      "innerWidth": 390,
+      "smallTargets": [],
+      "mainLeft": 0,
+      "navBottom": 0
+    },
+    "settings": {
+      "scrollWidth": 390,
+      "innerWidth": 390,
+      "smallTargets": [],
+      "mainLeft": 0,
+      "navBottom": 0
+    },
+    "install": {
+      "scrollWidth": 390,
+      "innerWidth": 390,
+      "smallTargets": [],
+      "mainLeft": 0,
+      "navBottom": 0
+    }
+  },
+  "forms": {
+    "entry": {
+      "sheetLeft": 0,
+      "sheetRight": 390,
+      "innerWidth": 390,
+      "bodyScrollWidth": 388,
+      "bodyClientWidth": 388,
+      "activeInside": true
+    },
+    "task": {
+      "sheetLeft": 0,
+      "sheetRight": 390,
+      "innerWidth": 390,
+      "bodyScrollWidth": 388,
+      "bodyClientWidth": 388,
+      "activeInside": true
+    },
+    "inspection": {
+      "sheetLeft": 0,
+      "sheetRight": 390,
+      "innerWidth": 390,
+      "bodyScrollWidth": 388,
+      "bodyClientWidth": 388,
+      "activeInside": true
+    },
+    "equipment": {
+      "sheetLeft": 0,
+      "sheetRight": 390,
+      "innerWidth": 390,
+      "bodyScrollWidth": 388,
+      "bodyClientWidth": 388,
+      "activeInside": true
+    },
+    "event": {
+      "sheetLeft": 0,
+      "sheetRight": 390,
+      "innerWidth": 390,
+      "bodyScrollWidth": 388,
+      "bodyClientWidth": 388,
+      "activeInside": true
+    },
+    "knowledge": {
+      "sheetLeft": 0,
+      "sheetRight": 390,
+      "innerWidth": 390,
+      "bodyScrollWidth": 388,
+      "bodyClientWidth": 388,
+      "activeInside": true
+    }
+  },
+  "errors": []
+}

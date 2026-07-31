@@ -1,0 +1,52 @@
+{
+  "viewports": {
+    "320": {
+      "scrollWidth": 320,
+      "innerWidth": 320,
+      "navPosition": "fixed",
+      "navBottom": 0,
+      "navBottomAfterScroll": 0
+    },
+    "375": {
+      "scrollWidth": 375,
+      "innerWidth": 375,
+      "navPosition": "fixed",
+      "navBottom": 0,
+      "navBottomAfterScroll": 0
+    },
+    "390": {
+      "scrollWidth": 390,
+      "innerWidth": 390,
+      "navPosition": "fixed",
+      "navBottom": 0,
+      "navBottomAfterScroll": 0
+    },
+    "430": {
+      "scrollWidth": 430,
+      "innerWidth": 430,
+      "navPosition": "fixed",
+      "navBottom": 0,
+      "navBottomAfterScroll": 0
+    }
+  },
+  "consoleErrors": [],
+  "pageErrors": [],
+  "checks": {
+    "modal": {
+      "appInert": true,
+      "navInert": true,
+      "activeInside": true,
+      "role": "dialog",
+      "closed": true
+    },
+    "atomicRollback": {
+      "failed": true,
+      "preserved": true
+    },
+    "undo": {
+      "gone": true,
+      "restored": true,
+      "exists": true
+    }
+  }
+}

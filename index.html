@@ -34,6 +34,7 @@
 </head>
 <body>
   <div id="offlineBar" class="offline-bar" hidden>Нет сети — приложение работает локально</div>
+  <div id="updateBar" class="update-bar" hidden><span>Доступна новая версия</span><button type="button" id="applyUpdate">Обновить</button><button type="button" id="dismissUpdate" aria-label="Отложить обновление">Позже</button></div>
 
   <div class="app-shell">
     <header class="app-header">
@@ -60,7 +61,7 @@
 
   <template id="modalTemplate">
     <div class="modal-backdrop" data-modal-backdrop>
-      <section class="modal-sheet" role="dialog" aria-modal="true" aria-labelledby="modalTitle" data-sheet>
+      <section class="modal-sheet" role="dialog" aria-modal="true" aria-labelledby="modalTitle" data-sheet tabindex="-1">
         <div class="sheet-handle-zone" data-sheet-handle aria-hidden="true"><div class="sheet-handle"></div></div>
         <header class="modal-header" data-sheet-handle>
           <button class="text-button" data-modal-close>Отмена</button>
@@ -72,6 +73,7 @@
     </div>
   </template>
 
+  <script src="./stability-logic.js" defer></script>
   <script src="./event-logic.js" defer></script>
   <script src="./knowledge-logic.js" defer></script>
   <script src="./app.js" defer></script>

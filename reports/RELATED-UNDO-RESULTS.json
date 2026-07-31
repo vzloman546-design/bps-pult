@@ -1,0 +1,6 @@
+{
+  "linkCleared": true,
+  "noOrphanAfterDelete": true,
+  "linkRestoredOnUndo": true,
+  "eventRestoredOnUndo": true
+}

@@ -206,10 +206,9 @@ function openKnowledgeArticleForm(existing = null) {
     await dbPut('knowledgeArticles', saved);
     closeModal(); toast(existing ? 'Материал обновлён' : 'Материал сохранён'); await render();
   });
-  node.querySelector('[data-kb-form-delete]')?.addEventListener('click', () => {
-    confirmModal('Удалить материал?', 'Статья и история её изменений будут удалены.', 'Удалить', async () => {
-      await dbDelete('knowledgeArticles', existing.id); closeModal(); toast('Материал удалён'); await render();
-    }, true);
+  node.querySelector('[data-kb-form-delete]')?.addEventListener('click', async () => {
+    closeModal({ immediate:true });
+    await softDelete('knowledgeArticles', existing.id, 'Материал');
   });
 }
 window.openKnowledgeArticleForm = openKnowledgeArticleForm;
@@ -277,7 +276,7 @@ function openKnowledgeHistory(article) {
 
 function openKnowledgeCategoryForm(existing = null) {
   const descendants = existing ? BpsKnowledgeLogic.descendantIds(existing.id, state.data.knowledgeCategories) : new Set();
-  const body = `<form id="knowledgeCategoryForm"><div class="field"><label class="required" for="knowledgeCategoryName">Название</label><input id="knowledgeCategoryName" required value="${esc(existing?.name || '')}" placeholder="Например: Контроллеры"></div><div class="field"><label for="knowledgeCategoryParent">Родительский раздел</label><select id="knowledgeCategoryParent"><option value="">Корневой раздел</option>${categoryOptions(existing?.parentId || '', descendants)}</select></div>${existing ? `<button type="button" class="button danger full" id="deleteKnowledgeCategory">${icon('trash')}Удалить раздел</button>` : ''}</form>`;
+  const body = `<form id="knowledgeCategoryForm"><div class="field"><label class="required" for="knowledgeCategoryName">Название</label><input id="knowledgeCategoryName" required value="${esc(existing?.name || '')}" placeholder="Например: Контроллеры"></div><div class="field"><label for="knowledgeCategoryParent">Родительский раздел</label><select id="knowledgeCategoryParent"><option value="">Корневой раздел</option>${categoryOptions(existing?.parentId || '', descendants)}</select></div>${existing && !existing.system ? `<button type="button" class="button danger full" id="deleteKnowledgeCategory">${icon('trash')}Удалить раздел</button>` : ''}</form>`;
   const node = openModal(existing ? 'Изменить раздел' : 'Новый раздел', body, { actionHtml:'<button class="text-button" id="saveKnowledgeCategory">Сохранить</button>' });
   node.querySelector('#saveKnowledgeCategory').addEventListener('click', async () => {
     const form = node.querySelector('#knowledgeCategoryForm'); if (!form.reportValidity()) return;
@@ -293,8 +292,8 @@ function openKnowledgeCategoryForm(existing = null) {
     const hasArticles = state.data.knowledgeArticles.some(item => item.categoryId === existing.id);
     const hasChildren = state.data.knowledgeCategories.some(item => item.parentId === existing.id);
     if (hasArticles || hasChildren) { toast('Сначала перенесите вложенные разделы и материалы'); return; }
-    confirmModal('Удалить раздел?', 'Пустой раздел будет удалён.', 'Удалить', async () => {
-      await dbDelete('knowledgeCategories', existing.id); closeModal({ immediate:true }); toast('Раздел удалён'); await refreshData(); openKnowledgeCategoryManager();
+    confirmModal('Удалить раздел?', 'Пустой раздел будет перемещён в корзину.', 'Удалить', async () => {
+      closeModal({ immediate:true }); await softDelete('knowledgeCategories', existing.id, 'Раздел');
     }, true);
   });
 }
