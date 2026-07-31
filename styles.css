@@ -1780,3 +1780,27 @@ html[data-theme="dark"][data-contrast="high"] {
   .knowledge-step-edit-row { grid-template-columns: 28px minmax(0,1fr); }
   .step-reorder-actions { grid-column: 2; grid-template-columns: repeat(3,44px); }
 }
+
+
+/* Web Push settings */
+.settings-note {
+  margin: var(--space-3) 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.push-select-row select {
+  width: min(178px, 46vw);
+  min-height: var(--tap-size);
+  margin: 0;
+  justify-self: end;
+}
+@media (max-width: 360px) {
+  .push-select-row {
+    grid-template-columns: 1fr;
+  }
+  .push-select-row select {
+    width: 100%;
+    justify-self: stretch;
+  }
+}

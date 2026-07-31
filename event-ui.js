@@ -293,6 +293,7 @@ function openEventEditor(initialDraft, isExisting, restoredDraft = null) {
     closeModal();
     toast(isExisting ? 'Мероприятие обновлено' : 'Мероприятие создано');
     await render();
+    await reconcilePushNotifications();
   });
 
   renderEditor();
@@ -375,9 +376,10 @@ function openEventDetail(id) {
       event.status = next;
       event.updatedAt = nowISO();
       await dbPut('events', event);
-      toast(`Статус: ${EVENT_STATUS_LABELS[next]}`,{actionText:'Отменить',duration:6500,onAction:async()=>{event.status=previous;event.updatedAt=nowISO();await dbPut('events',event);renderDetail();await refreshData();}});
-      renderDetail();
       await refreshData();
+      await reconcilePushNotifications();
+      toast(`Статус: ${EVENT_STATUS_LABELS[next]}`,{actionText:'Отменить',duration:6500,onAction:async()=>{event.status=previous;event.updatedAt=nowISO();await dbPut('events',event);renderDetail();await refreshData();await reconcilePushNotifications();}});
+      renderDetail();
     });
     bindRelatedEntityLinks(body);
   };
@@ -423,3 +425,5 @@ function bindEventPageEvents(main) {
   }));
 }
 window.bindEventPageEvents = bindEventPageEvents;
+
+window.openEventDetail = openEventDetail;

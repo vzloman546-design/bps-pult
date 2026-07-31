@@ -21,6 +21,20 @@ const INSPECTION_ITEMS = [
   'Контрольный билет', 'Синхронизация данных'
 ];
 
+const DEFAULT_PUSH_PREFERENCES = Object.freeze({
+  tasksEnabled: true,
+  taskLeadMinutes: 60,
+  eventsEnabled: true,
+  eventLeadHours: 24,
+  doorsEnabled: true,
+  doorsLeadMinutes: 60,
+  backupEnabled: true,
+  backupIntervalDays: 14,
+});
+let pushPreferences = { ...DEFAULT_PUSH_PREFERENCES };
+let pushReconcilePromise = null;
+let pushSettingsRenderTimer = null;
+
 const state = {
   route: 'today',
   journal: { query: '', type: 'Все типы', object: 'Все объекты', status: 'Все статусы', period: 'Все даты' },
@@ -76,6 +90,7 @@ const iconPaths = {
   equipment: '<rect x="3" y="5" width="18" height="13" rx="2"/><path d="M8 21h8M12 18v3"/>',
   report: '<path d="M6 3h9l3 3v15H6z"/><path d="M15 3v4h4M9 12h6M9 16h6M9 8h2"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>',
+  bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
   download: '<path d="M12 3v12M7 10l5 5 5-5M4 20h16"/>',
   upload: '<path d="M12 21V9M7 14l5-5 5 5M4 4h16"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
@@ -686,7 +701,10 @@ async function softDelete(store, id, label = 'Объект', relatedStores = [],
     actionText: 'Отменить',
     duration: 8000,
     onAction: async () => {
-      if (await restoreTrashItem(trashId)) toast(`${label} восстановлен`);
+      if (await restoreTrashItem(trashId)) {
+        toast(`${label} восстановлен`);
+        if (['tasks','events'].includes(store)) await reconcilePushNotifications();
+      }
     },
   });
   return true;
@@ -696,9 +714,16 @@ async function deleteEntryWithUndo(id) {
   return softDelete('entries', id, 'Запись', ['tasks'], source =>
     BpsStability.relatedChangesForDelete('entries', id, source, nowISO()));
 }
+async function deleteTaskWithUndo(id) {
+  const deleted = await softDelete('tasks', id, 'Задача');
+  if (deleted) await reconcilePushNotifications();
+  return deleted;
+}
 async function deleteEventWithUndo(id) {
-  return softDelete('events', id, 'Мероприятие', ['entries','tasks','inspections','knowledgeArticles'], source =>
+  const deleted = await softDelete('events', id, 'Мероприятие', ['entries','tasks','inspections','knowledgeArticles'], source =>
     BpsStability.relatedChangesForDelete('events', id, source, nowISO()));
+  if (deleted) await reconcilePushNotifications();
+  return deleted;
 }
 async function deleteEquipmentWithUndo(id) {
   return softDelete('equipment', id, 'Оборудование', ['knowledgeArticles'], source =>
@@ -726,8 +751,8 @@ function setTheme(theme) {
   const iconSuffix = resolved === 'dark' ? 'dark' : 'light';
   const favicon = document.getElementById('appFavicon');
   const appleTouchIcon = document.getElementById('appleTouchIcon');
-  if (favicon) favicon.setAttribute('href', `./favicon-${iconSuffix}-32.png?v=2.5.1`);
-  if (appleTouchIcon) appleTouchIcon.setAttribute('href', `./apple-touch-icon-${iconSuffix}.png?v=2.5.1`);
+  if (favicon) favicon.setAttribute('href', `./favicon-${iconSuffix}-32.png?v=2.6.0`);
+  if (appleTouchIcon) appleTouchIcon.setAttribute('href', `./apple-touch-icon-${iconSuffix}.png?v=2.6.0`);
   document.getElementById('themeQuickBtn').innerHTML = icon(resolved === 'dark' ? 'sun' : 'moon');
 }
 async function cycleTheme() {
@@ -787,6 +812,7 @@ async function render() {
   } else {
     await update();
   }
+  handleNotificationDeepLink();
   if (previousRoute !== state.route) window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
@@ -1106,8 +1132,258 @@ async function requestStoragePersistence() {
   await render();
   return granted;
 }
+async function loadPushPreferences() {
+  const saved = await getSetting('pushPreferences', null);
+  pushPreferences = { ...DEFAULT_PUSH_PREFERENCES, ...(saved && typeof saved === 'object' ? saved : {}) };
+  return pushPreferences;
+}
+
+async function savePushPreferences() {
+  await setSetting('pushPreferences', pushPreferences);
+}
+
+function pushStateSnapshot() {
+  if (!window.BpsPush) {
+    return { supported:false, standalone:isStandalone(), permission:'unsupported', paired:false, queueCount:0, registryCount:0 };
+  }
+  return BpsPush.state();
+}
+
+function pushStatusPresentation(pushState) {
+  if (!pushState.supported) return { tone:'danger', label:'Не поддерживается', detail:'На этом устройстве недоступны системные Web Push-уведомления.' };
+  if (!pushState.standalone && isIOS()) return { tone:'warning', label:'Откройте с экрана «Домой»', detail:'На iPhone разрешение выдаётся только установленной PWA.' };
+  if (pushState.permission === 'denied') return { tone:'danger', label:'Запрещены в iOS', detail:'Разрешите уведомления в системных настройках iPhone.' };
+  if (pushState.paired && pushState.permission === 'granted') return { tone:'success', label:'Подключены', detail:'Cloudflare Worker может присылать уведомления, когда PWA закрыта.' };
+  if (pushState.paired) return { tone:'warning', label:'Требуется разрешение', detail:'Подписка сохранена, но системное разрешение сейчас не активно.' };
+  return { tone:'warning', label:'Не подключены', detail:'Подключите этот iPhone кодом из Cloudflare.' };
+}
+
+function futureReminderTime(targetMs, leadMs) {
+  if (!Number.isFinite(targetMs) || targetMs <= Date.now() + 30000) return null;
+  const preferred = targetMs - Math.max(0, leadMs || 0);
+  if (preferred > Date.now() + 30000) return preferred;
+  return Math.min(targetMs, Date.now() + 60000);
+}
+
+function eventDoorsTimestamp(event) {
+  const eventDate = parseDate(event?.date);
+  const match = String(event?.doorsOpenAt || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (!eventDate || !match) return null;
+  const doors = new Date(eventDate);
+  doors.setHours(Number(match[1]), Number(match[2]), 0, 0);
+  return doors.getTime();
+}
+
+async function buildDesiredPushNotifications() {
+  const desired = [];
+  const now = Date.now();
+
+  if (pushPreferences.tasksEnabled) {
+    for (const task of state.data.tasks) {
+      if (task.completed || !task.dueAt) continue;
+      const due = new Date(task.dueAt).getTime();
+      const runAt = futureReminderTime(due, Number(pushPreferences.taskLeadMinutes) * 60000);
+      if (!runAt) continue;
+      const lead = Number(pushPreferences.taskLeadMinutes);
+      desired.push({
+        key:`task:${task.id}:due`,
+        payload:{
+          localId:task.id,
+          type:'task_due',
+          title:lead > 0 ? 'Скоро срок задачи' : 'Наступил срок задачи',
+          body:task.title,
+          runAt:new Date(runAt),
+          url:`./#tasks?open=${encodeURIComponent(task.id)}`,
+          tag:`task-${task.id}`,
+        },
+      });
+    }
+  }
+
+  for (const event of state.data.events) {
+    if (event.status === 'completed' || !event.date) continue;
+    const eventTime = new Date(event.date).getTime();
+    if (pushPreferences.eventsEnabled) {
+      const runAt = futureReminderTime(eventTime, Number(pushPreferences.eventLeadHours) * 3600000);
+      if (runAt) {
+        desired.push({
+          key:`event:${event.id}:start`,
+          payload:{
+            localId:event.id,
+            type:'event_start',
+            title:'Приближается мероприятие',
+            body:`${event.name}. Проверьте готовность БПС.`,
+            runAt:new Date(runAt),
+            url:`./#events?open=${encodeURIComponent(event.id)}`,
+            tag:`event-${event.id}-start`,
+          },
+        });
+      }
+    }
+    if (pushPreferences.doorsEnabled && event.doorsOpenAt) {
+      const doorsTime = eventDoorsTimestamp(event);
+      const runAt = futureReminderTime(doorsTime, Number(pushPreferences.doorsLeadMinutes) * 60000);
+      if (runAt) {
+        desired.push({
+          key:`event:${event.id}:doors`,
+          payload:{
+            localId:event.id,
+            type:'event_doors',
+            title:'Скоро открытие входов',
+            body:`${event.name}. Проверьте незавершённые пункты чек-листа.`,
+            runAt:new Date(runAt),
+            url:`./#events?open=${encodeURIComponent(event.id)}`,
+            tag:`event-${event.id}-doors`,
+          },
+        });
+      }
+    }
+  }
+
+  if (pushPreferences.backupEnabled) {
+    const lastBackupAt = await getSetting('lastBackupAt', null);
+    let backupBaseAt = lastBackupAt || await getSetting('pushBackupBaseAt', null);
+    if (!backupBaseAt) {
+      backupBaseAt = nowISO();
+      await setSetting('pushBackupBaseAt', backupBaseAt);
+    }
+    const baseTime = new Date(backupBaseAt).getTime();
+    const intervalDays = Math.max(1, Number(pushPreferences.backupIntervalDays) || 14);
+    const interval = intervalDays * 86400000;
+    const reminderSignature = `${backupBaseAt}|${intervalDays}`;
+    const storedSignature = await getSetting('pushBackupReminderSignature', null);
+    let runAt = new Date(await getSetting('pushBackupReminderDueAt', 0)).getTime();
+    if (storedSignature !== reminderSignature || !Number.isFinite(runAt) || runAt <= 0 || (runAt <= now && !BpsPush.has?.('backup:stale'))) {
+      runAt = baseTime + interval;
+      if (runAt <= now + 30000) runAt = now + 60000;
+      await setSetting('pushBackupReminderSignature', reminderSignature);
+      await setSetting('pushBackupReminderDueAt', new Date(runAt).toISOString());
+    }
+    desired.push({
+      key:'backup:stale',
+      payload:{
+        localId:'backup',
+        type:'backup_due',
+        title:'Создайте резервную копию',
+        body:`Последняя копия старше ${intervalDays} дней или ещё не создавалась.`,
+        runAt:new Date(runAt),
+        url:'./#settings',
+        tag:'bps-backup-reminder',
+      },
+    });
+  }
+
+  return desired;
+}
+
+async function reconcilePushNotifications({ notify = false } = {}) {
+  if (pushReconcilePromise) return pushReconcilePromise;
+  pushReconcilePromise = (async () => {
+    await loadPushPreferences();
+    const snapshot = pushStateSnapshot();
+    if (!snapshot.supported || !snapshot.paired || snapshot.permission !== 'granted') return { skipped:true };
+    if (navigator.onLine) {
+      await BpsPush.syncSubscription().catch(error => console.warn('Push subscription sync failed', error));
+      await BpsPush.flushQueue().catch(error => console.warn('Push queue sync failed', error));
+    }
+    const desired = await buildDesiredPushNotifications();
+    const result = await BpsPush.reconcile(desired);
+    if (notify) toast(result.scheduled || result.removed ? 'Расписание уведомлений обновлено' : 'Уведомления уже синхронизированы');
+    return result;
+  })();
+  try {
+    return await pushReconcilePromise;
+  } catch (error) {
+    if (notify) toast(error.message || 'Не удалось синхронизировать уведомления');
+    else console.warn('Push reconciliation failed', error);
+    return { skipped:true, error };
+  } finally {
+    pushReconcilePromise = null;
+  }
+}
+
+async function syncPushInBackground() {
+  if (!navigator.onLine || !window.BpsPush) return;
+  await reconcilePushNotifications();
+  if (state.route === 'settings') await render();
+}
+
+function notificationSettingsHtml(pushState) {
+  const status = pushStatusPresentation(pushState);
+  const canConnect = pushState.supported && (pushState.standalone || !isIOS()) && pushState.permission !== 'denied' && !pushState.paired;
+  const connected = pushState.paired && pushState.permission === 'granted';
+  const queueText = pushState.queueCount ? `${pushState.queueCount} ожидает сети` : 'Нет ожидающих операций';
+  const taskLeadOptions = [[0,'Точно в срок'],[15,'За 15 минут'],[60,'За 1 час'],[1440,'За сутки']];
+  const eventLeadOptions = [[1,'За 1 час'],[3,'За 3 часа'],[24,'За сутки'],[48,'За 2 суток']];
+  const doorsLeadOptions = [[15,'За 15 минут'],[30,'За 30 минут'],[60,'За 1 час'],[120,'За 2 часа']];
+  const backupOptions = [[7,'Через 7 дней'],[14,'Через 14 дней'],[30,'Через 30 дней']];
+
+  return `<section class="section"><div class="section-head"><div><h2 class="section-title">Уведомления</h2><p class="section-subtitle">Системные push от установленного PWA</p></div></div>
+    <div class="card"><div class="data-stat"><span>Статус</span><strong class="status-text ${status.tone}">${esc(status.label)}</strong></div><div class="data-stat"><span>Очередь</span><strong>${esc(queueText)}</strong></div><p class="settings-note">${esc(status.detail)}</p></div>
+    ${!pushState.standalone && isIOS() ? `<div class="warning-box spaced-top">Откройте сайт в Safari, выберите «Поделиться» → «На экран Домой», затем запускайте приложение с иконки.</div>` : ''}
+    ${pushState.permission === 'denied' ? `<div class="warning-box spaced-top">Откройте «Настройки iPhone → Уведомления → БПС Пульт» и разрешите уведомления.</div>` : ''}
+    ${connected ? `<div class="settings-list compact-settings spaced-top">
+      <div class="settings-row"><span class="settings-copy"><strong>Задачи</strong><small>Напоминание перед установленным сроком</small></span><button type="button" class="switch ${pushPreferences.tasksEnabled?'on':''}" data-push-toggle="tasksEnabled" role="switch" aria-checked="${pushPreferences.tasksEnabled}" aria-label="Уведомления о задачах"></button></div>
+      <div class="settings-row push-select-row"><label class="settings-copy" for="pushTaskLead"><strong>Когда напоминать</strong><small>Для задач со сроком</small></label><select id="pushTaskLead" data-push-select="taskLeadMinutes">${taskLeadOptions.map(([value,label])=>`<option value="${value}" ${Number(pushPreferences.taskLeadMinutes)===value?'selected':''}>${label}</option>`).join('')}</select></div>
+      <div class="settings-row"><span class="settings-copy"><strong>Мероприятия</strong><small>Напоминание перед началом</small></span><button type="button" class="switch ${pushPreferences.eventsEnabled?'on':''}" data-push-toggle="eventsEnabled" role="switch" aria-checked="${pushPreferences.eventsEnabled}" aria-label="Уведомления о мероприятиях"></button></div>
+      <div class="settings-row push-select-row"><label class="settings-copy" for="pushEventLead"><strong>До мероприятия</strong><small>Основное напоминание</small></label><select id="pushEventLead" data-push-select="eventLeadHours">${eventLeadOptions.map(([value,label])=>`<option value="${value}" ${Number(pushPreferences.eventLeadHours)===value?'selected':''}>${label}</option>`).join('')}</select></div>
+      <div class="settings-row"><span class="settings-copy"><strong>Открытие входов</strong><small>Отдельное предупреждение по времени входов</small></span><button type="button" class="switch ${pushPreferences.doorsEnabled?'on':''}" data-push-toggle="doorsEnabled" role="switch" aria-checked="${pushPreferences.doorsEnabled}" aria-label="Уведомления об открытии входов"></button></div>
+      <div class="settings-row push-select-row"><label class="settings-copy" for="pushDoorsLead"><strong>До открытия</strong><small>Интервал предупреждения</small></label><select id="pushDoorsLead" data-push-select="doorsLeadMinutes">${doorsLeadOptions.map(([value,label])=>`<option value="${value}" ${Number(pushPreferences.doorsLeadMinutes)===value?'selected':''}>${label}</option>`).join('')}</select></div>
+      <div class="settings-row"><span class="settings-copy"><strong>Резервная копия</strong><small>Напомнить, если давно не создавался архив</small></span><button type="button" class="switch ${pushPreferences.backupEnabled?'on':''}" data-push-toggle="backupEnabled" role="switch" aria-checked="${pushPreferences.backupEnabled}" aria-label="Напоминание о резервной копии"></button></div>
+      <div class="settings-row push-select-row"><label class="settings-copy" for="pushBackupDays"><strong>Период без копии</strong><small>После этого придёт напоминание</small></label><select id="pushBackupDays" data-push-select="backupIntervalDays">${backupOptions.map(([value,label])=>`<option value="${value}" ${Number(pushPreferences.backupIntervalDays)===value?'selected':''}>${label}</option>`).join('')}</select></div>
+    </div>` : ''}
+    <div class="button-stack spaced-top">
+      ${canConnect ? `<button class="button primary full" data-action="enable-push">${icon('bell')}Включить уведомления</button>` : ''}
+      ${connected ? `<button class="button primary full" data-action="test-push">${icon('bell')}Отправить тестовое</button><button class="button full" data-action="sync-push">${icon('refresh')}Синхронизировать расписание</button><button class="button danger full" data-action="disable-push">Отключить уведомления</button>` : ''}
+    </div>
+  </section>`;
+}
+
+function openPushSetupModal() {
+  const node = openModal('Подключить уведомления', `<form id="pushSetupForm"><div class="notice-card card"><div class="notice-icon">${icon('bell')}</div><div><h3>Системные уведомления iPhone</h3><p>Код используется только один раз для безопасного подключения этого устройства к Cloudflare Worker.</p></div></div><div class="field spaced-top"><label class="required" for="pushPairingCode">Код подключения</label><input id="pushPairingCode" type="password" required autocomplete="one-time-code" autocapitalize="off" spellcheck="false" placeholder="Вставьте PAIRING_CODE"></div><div id="pushSetupError" class="field-error" hidden></div></form>`, { actionHtml:'<button class="text-button" id="connectPush">Подключить</button>' });
+  const button = node.querySelector('#connectPush');
+  const input = node.querySelector('#pushPairingCode');
+  const errorBox = node.querySelector('#pushSetupError');
+  button.addEventListener('click', async () => {
+    if (!node.querySelector('#pushSetupForm').reportValidity()) return;
+    button.disabled = true;
+    button.textContent = 'Подключение…';
+    errorBox.hidden = true;
+    try {
+      await BpsPush.enable(input.value);
+      if (!await getSetting('pushBackupBaseAt', null)) await setSetting('pushBackupBaseAt', nowISO());
+      await setSetting('pushBackupReminderSignature', null);
+      await reconcilePushNotifications();
+      closeModal({ immediate:true });
+      toast('Уведомления подключены');
+      await render();
+    } catch (error) {
+      errorBox.textContent = error.message || 'Не удалось подключить уведомления';
+      errorBox.hidden = false;
+      button.disabled = false;
+      button.textContent = 'Подключить';
+    }
+  });
+  setTimeout(() => input.focus({ preventScroll:true }), 250);
+}
+
+function handleNotificationDeepLink() {
+  const parts = location.hash.replace(/^#/, '').split('?');
+  if (parts.length < 2) return;
+  const params = new URLSearchParams(parts.slice(1).join('?'));
+  const id = params.get('open');
+  if (!id) return;
+  history.replaceState(null, '', `#${state.route}`);
+  setTimeout(() => {
+    if (state.route === 'tasks') openTaskDetail(id);
+    else if (state.route === 'events') window.openEventDetail?.(id) || openEventDetail(id);
+  }, 80);
+}
+
 async function renderSettings() {
   const theme = await getSetting('theme','system');
+  await loadPushPreferences();
+  const pushState = pushStateSnapshot();
   const storage = await storageInfo();
   const trashCount = (await dbGetAll('trash')).length;
   const lastBackupAt = await getSetting('lastBackupAt', null);
@@ -1119,6 +1395,7 @@ async function renderSettings() {
   const storageWarning = storage.warning ? `<div class="warning-box spaced-bottom">${esc(storage.warning)}</div>` : '';
   return `<section class="section"><div class="section-head"><div><h2 class="section-title">Внешний вид</h2></div></div><div class="card"><div class="field flush"><label>Тема приложения</label><div class="segmented">${['system','light','dark'].map(t=>`<button class="segment-button ${t===theme?'active':''}" data-theme-choice="${t}">${{system:'Системная',light:'Светлая',dark:'Тёмная'}[t]}</button>`).join('')}</div></div><div class="toggle-row settings-toggle"><div class="toggle-copy"><strong>Повышенный контраст</strong><span>Для работы на улице и при ярком свете</span></div><button type="button" class="switch ${state.preferences.highContrast?'on':''}" id="highContrastSwitch" role="switch" aria-checked="${state.preferences.highContrast}" aria-label="Повышенный контраст"></button></div></div></section>
     <section class="section"><div class="section-head"><div><h2 class="section-title">Рабочий профиль</h2></div></div><div class="card"><div class="field"><label for="operatorName">Имя в отметках проверки</label><input id="operatorName" value="${esc(state.preferences.operatorName)}" maxlength="80" placeholder="Например: Артём"></div><div class="field flush"><label for="startupRoute">Раздел при запуске</label><select id="startupRoute"><option value="last" ${state.preferences.startupRoute==='last'?'selected':''}>Продолжить с последнего</option>${Object.entries(routeTitles).filter(([route])=>!['install','settings'].includes(route)).map(([route,title])=>`<option value="${route}" ${state.preferences.startupRoute===route?'selected':''}>${esc(title)}</option>`).join('')}</select></div></div></section>
+    ${notificationSettingsHtml(pushState)}
     <section class="section"><div class="section-head"><div><h2 class="section-title">Локальное хранилище</h2><p class="section-subtitle">Данные находятся только на этом устройстве</p></div></div>${storageWarning}<div class="card"><div class="data-stat"><span>Использовано</span><strong>${storage.text}</strong></div><div class="data-stat"><span>Защита хранения</span><strong class="status-text ${storage.persisted?'success':'warning'}">${storage.persisted?'Постоянное':'Не гарантировано'}</strong></div><div class="data-stat"><span>Корзина</span><strong>${trashCount} объектов</strong></div><div class="progress-bar progress-spaced"><div class="progress-fill" style="width:${storage.percent}%"></div></div>${!storage.persisted?`<button class="button full spaced-top" data-action="request-persistence">Запросить постоянное хранение</button>`:''}${trashCount?`<button class="button full spaced-top" data-action="empty-trash">Очистить корзину сейчас</button>`:''}</div></section>
     <section class="section"><div class="section-head"><div><h2 class="section-title">Резервная копия</h2><p class="section-subtitle">Проверяемый архив с отдельными вложениями</p></div></div><div class="card"><div class="data-stat"><span>Последняя копия</span><strong class="status-text ${backupTone}">${esc(backupText)}</strong></div><div class="data-stat"><span>Формат</span><strong>BPSBACKUP v2</strong></div></div><div class="button-row spaced"><button class="button" data-action="export-data">${icon('download')}Создать архив</button><label class="button primary file-button">${icon('upload')}Восстановить<input id="importInput" type="file" accept=".bpsbackup,.zip,.json,application/json,application/zip" hidden></label></div></section>
     <section class="section"><div class="section-head"><div><h2 class="section-title">Надёжность</h2></div></div><div class="list-card"><button class="list-row" data-action="check-integrity"><span class="row-icon">${icon('check')}</span><span class="list-row-main"><span class="list-row-title">Проверить целостность базы</span><span class="list-row-meta">Связи, идентификаторы, даты и конфигурации</span></span><span class="list-row-chevron">${icon('chevron')}</span></button><button class="list-row" data-action="download-diagnostic"><span class="row-icon">${icon('report')}</span><span class="list-row-main"><span class="list-row-title">Диагностический отчёт</span><span class="list-row-meta">Без текстов записей и рабочих данных</span></span><span class="list-row-chevron">${icon('download')}</span></button></div></section>
@@ -1370,7 +1647,7 @@ function openEntryForm(existing = null, restoredDraft = null) {
     if (linkedTask) await putRecordsAtomically({ entries:record, tasks:linkedTask });
     else await dbPut('entries',record);
     await draftController.clear();
-    closeModal();toast(existing?.id?'Запись обновлена':'Запись сохранена');await render();
+    closeModal();toast(existing?.id?'Запись обновлена':'Запись сохранена');await render();await reconcilePushNotifications();
   });
   node.querySelector('[data-delete-entry]')?.addEventListener('click',async()=>{await draftController.clear();closeModal({immediate:true});await deleteEntryWithUndo(existing.id);});
 }
@@ -1392,11 +1669,13 @@ function openTaskForm(existing = null, restoredDraft = null) {
   const draftController=attachDraftAutosave(node,{type:'task',entityId:preset.id||'',restored:restoredDraft,formSelector:'#taskForm'});
   node.querySelector('#saveTask').addEventListener('click',async()=>{
     const form=node.querySelector('#taskForm');if(!form.reportValidity())return;
-    await dbPut('tasks',{id:preset.id||uid('task'),title:node.querySelector('#taskTitle').value.trim(),object:node.querySelector('#taskObject').value,priority:node.querySelector('#taskPriority').value,dueAt:node.querySelector('#taskDue').value?new Date(node.querySelector('#taskDue').value).toISOString():null,description:node.querySelector('#taskDescription').value.trim(),completed:preset.completed||false,completedAt:preset.completedAt||null,eventId:node.querySelector('#linkedEvent')?.value||null,linkedEntryId:preset.linkedEntryId||null,linkedInspectionId:preset.linkedInspectionId||null,createdAt:preset.createdAt||nowISO(),updatedAt:nowISO(),sample:preset.sample||false});
+    const record={id:preset.id||uid('task'),title:node.querySelector('#taskTitle').value.trim(),object:node.querySelector('#taskObject').value,priority:node.querySelector('#taskPriority').value,dueAt:node.querySelector('#taskDue').value?new Date(node.querySelector('#taskDue').value).toISOString():null,description:node.querySelector('#taskDescription').value.trim(),completed:preset.completed||false,completedAt:preset.completedAt||null,eventId:node.querySelector('#linkedEvent')?.value||null,linkedEntryId:preset.linkedEntryId||null,linkedInspectionId:preset.linkedInspectionId||null,createdAt:preset.createdAt||nowISO(),updatedAt:nowISO(),sample:preset.sample||false};
+    await dbPut('tasks',record);
     await draftController.clear();
     closeModal();toast(preset.id?'Задача обновлена':'Задача создана');await render();
+    await reconcilePushNotifications();
   });
-  node.querySelector('[data-delete-task]')?.addEventListener('click',async()=>{await draftController.clear();closeModal({immediate:true});await softDelete('tasks',preset.id,'Задача');});
+  node.querySelector('[data-delete-task]')?.addEventListener('click',async()=>{await draftController.clear();closeModal({immediate:true});await deleteTaskWithUndo(preset.id);});
 }
 function openTaskDetail(id) {
   const t=state.data.tasks.find(x=>x.id===id);if(!t)return;
@@ -1432,7 +1711,7 @@ function openInspectionForm(existing = null, restoredDraft = null) {
     if (linkedTask) await putRecordsAtomically({ inspections:record, tasks:linkedTask });
     else await dbPut('inspections',record);
     await draftController.clear();
-    closeModal();toast(isExisting?'Осмотр обновлён':'Техосмотр сохранён');await render();
+    closeModal();toast(isExisting?'Осмотр обновлён':'Техосмотр сохранён');await render();await reconcilePushNotifications();
   });
   node.querySelector('[data-delete-inspection]')?.addEventListener('click',async()=>{await draftController.clear();closeModal({immediate:true});await deleteInspectionWithUndo(existing.id);});
 }
@@ -1502,6 +1781,7 @@ async function exportData() {
   if (!saved) { toast('Сохранение отменено'); return; }
   await setSetting('lastBackupAt', archive.manifest.exportedAt);
   await setSetting('lastBackupCounts', archive.manifest.counts);
+  await reconcilePushNotifications();
   toast('Резервная копия создана');
   if (state.route === 'settings') await render();
 }
@@ -1538,6 +1818,8 @@ async function importValidatedData(validation, mode) {
   else await atomicReplaceData(validation.payload.data, { settings });
   interactionState.dirtyDraftKeys.clear();
   interactionState.draftControllers.clear();
+  await refreshData();
+  await reconcilePushNotifications();
   return importedAt;
 }
 
@@ -1596,7 +1878,7 @@ async function clearAll() {
   state.recentItems=[];
   try { localStorage.removeItem('bps-last-data-change'); } catch (_) {}
   if(window.ensureKnowledgeSeed)await window.ensureKnowledgeSeed();
-  await setSetting('theme','system');await setSetting('dataSchemaVersion',SCHEMA_VERSION);await applyStoredTheme();toast('Все данные удалены');await render();
+  await setSetting('theme','system');await setSetting('dataSchemaVersion',SCHEMA_VERSION);await applyStoredTheme();toast('Все данные удалены');await render();await reconcilePushNotifications();
 }
 async function addSamples() {
   const now=new Date();const tomorrow=new Date(now.getTime()+864e5);const yesterday=new Date(now.getTime()-864e5);
@@ -1624,11 +1906,11 @@ async function addSamples() {
   sampleEvent.cashDesks[1].mode='closed';
   sampleEvent.checklist=BpsEventLogic.generateChecklist(sampleEvent);
   samples.events=[sampleEvent];
-  await putRecordsAtomically(samples);toast('Примеры добавлены');await render();
+  await putRecordsAtomically(samples);toast('Примеры добавлены');await render();await reconcilePushNotifications();
 }
 async function removeSamples() {
   for(const store of ['entries','tasks','inspections','equipment','events','knowledgeArticles']) { const all=await dbGetAll(store);for(const item of all.filter(x=>x.sample))await dbDelete(store,item.id); }
-  toast('Примеры удалены');await render();
+  toast('Примеры удалены');await render();await reconcilePushNotifications();
 }
 
 
@@ -1723,6 +2005,8 @@ async function toggleTaskWithUndo(task) {
   task.completedAt = task.completed ? nowISO() : null;
   task.updatedAt = nowISO();
   await dbPut('tasks', task);
+  await refreshData();
+  await reconcilePushNotifications();
   toast(task.completed ? 'Задача выполнена' : 'Задача возвращена', {
     actionText:'Отменить',
     duration:6500,
@@ -1734,6 +2018,7 @@ async function toggleTaskWithUndo(task) {
       fresh.updatedAt = nowISO();
       await dbPut('tasks', fresh);
       await render();
+      await reconcilePushNotifications();
     },
   });
   await render();
@@ -1767,6 +2052,13 @@ async function handleAppAction(action, id) {
   else if(action==='delete-equipment')await deleteEquipmentWithUndo(id);
   else if(action==='route')go(id);
   else if(action==='toggle-task'){const t=state.data.tasks.find(x=>x.id===id);if(t)await toggleTaskWithUndo(t);}
+  else if(action==='enable-push')openPushSetupModal();
+  else if(action==='test-push'){
+    try{await BpsPush.sendTest();toast('Тестовое уведомление отправлено');}
+    catch(error){toast(error.message||'Не удалось отправить тестовое уведомление');}
+  }
+  else if(action==='sync-push')await reconcilePushNotifications({notify:true});
+  else if(action==='disable-push')confirmModal('Отключить уведомления?','Подписка этого iPhone и будущие напоминания будут удалены из Cloudflare.','Отключить',async()=>{try{await BpsPush.disable();toast('Уведомления отключены');await render();}catch(error){toast(error.message||'Не удалось отключить уведомления');}},true);
   else if(action==='copy-report'){await navigator.clipboard.writeText(buildDailyReport());toast('Отчёт скопирован');}
   else if(action==='share-report'){const text=buildDailyReport();if(navigator.share)await navigator.share({title:'Итоги рабочего дня',text});else{await navigator.clipboard.writeText(text);toast('Web Share недоступен — текст скопирован');}}
   else if(action==='export-report-csv'){
@@ -1878,6 +2170,25 @@ function bindPageEvents() {
   main.querySelector('#startupRoute')?.addEventListener('change',async event=>{state.preferences.startupRoute=event.target.value;await saveUiPreferences();toast('Раздел запуска сохранён');});
   const operatorName=main.querySelector('#operatorName');
   operatorName?.addEventListener('change',async()=>{state.preferences.operatorName=operatorName.value.trim()||'Инженер';await saveUiPreferences();toast('Имя для проверок сохранено');});
+  main.querySelectorAll('[data-push-toggle]').forEach(button=>button.addEventListener('click',async()=>{
+    const key=button.dataset.pushToggle;
+    if(!(key in DEFAULT_PUSH_PREFERENCES))return;
+    pushPreferences[key]=!pushPreferences[key];
+    if(key==='backupEnabled'&&pushPreferences[key])await setSetting('pushBackupReminderSignature',null);
+    await savePushPreferences();
+    await reconcilePushNotifications();
+    await render();
+  }));
+  main.querySelectorAll('[data-push-select]').forEach(select=>select.addEventListener('change',async()=>{
+    const key=select.dataset.pushSelect;
+    if(!(key in DEFAULT_PUSH_PREFERENCES))return;
+    pushPreferences[key]=Number(select.value);
+    if(key==='backupIntervalDays')await setSetting('pushBackupReminderSignature',null);
+    await savePushPreferences();
+    await reconcilePushNotifications();
+    toast('Настройка уведомлений сохранена');
+    await render();
+  }));
   main.querySelector('#importInput')?.addEventListener('change',e=>{const file=e.target.files?.[0];if(file)openImportPreview(file);e.target.value='';});
   window.bindEventPageEvents?.(main);
   window.bindKnowledgePageEvents?.(main);
@@ -1985,12 +2296,19 @@ async function init(){
     document.getElementById('recordButton').addEventListener('click',openQuickCreate);
     document.addEventListener('pointerdown',e=>{if(interactionState.openSwipeRow&&!e.target.closest('[data-swipe-row]'))closeOpenSwipeRow();});
     bindEdgeBackGesture();
-    addEventListener('hashchange',render);addEventListener('online',updateOnlineStatus);addEventListener('offline',updateOnlineStatus);updateOnlineStatus();
+    addEventListener('hashchange',render);addEventListener('online',()=>{updateOnlineStatus();void syncPushInBackground();});addEventListener('offline',updateOnlineStatus);updateOnlineStatus();
+    addEventListener('bps-push-state',()=>{
+      if(state.route!=='settings')return;
+      clearTimeout(pushSettingsRenderTimer);
+      pushSettingsRenderTimer=setTimeout(()=>{if(state.route==='settings')void render();},140);
+    });
     addEventListener('bps-db-blocked',()=>toast('Закройте другие вкладки БПС Пульта для обновления базы',{duration:8000}));
     addEventListener('bps-db-versionchange',()=>{toast('База обновлена в другой вкладке. Приложение будет перезапущено.',{duration:3000});setTimeout(()=>location.reload(),1000);});
     matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',async()=>{if(await getSetting('theme','system')==='system'){setTheme('system');}});
+    await loadPushPreferences();
     await render();
     await registerServiceWorker();
+    await reconcilePushNotifications();
     await restoreLatestDraft();
     const storage = await storageInfo();
     if (!storage.persisted && isStandalone()) console.info('Persistent storage is not guaranteed');
