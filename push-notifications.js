@@ -2,7 +2,7 @@
   "use strict";
 
   // ВСТАВЬ URL после `npx wrangler deploy`.
-  const PUSH_API = "https://bps-push.YOUR_SUBDOMAIN.workers.dev";
+  const PUSH_API = "https://bps-pult-push.vzloman546.workers.dev";
   const AUTH_KEY = "bps-push-auth-v1";
 
   function isStandalone() {
