@@ -1,13 +1,11 @@
 {
-  "replaceIds": [
-    "imported"
-  ],
-  "merge": {},
-  "corruptRejected": true,
-  "afterCorruptCount": 3,
-  "mergeRows": {
-    "imported": "from backup",
-    "newer": "local newer",
-    "second": "second"
-  }
+  "version": "2.1.0",
+  "fixture": "tests/fixtures/legacy-schema-3.json",
+  "previewShown": true,
+  "migration": "3 → 4",
+  "mode": "merge",
+  "taskCountBefore": 2,
+  "taskCountAfter": 3,
+  "importedTaskVisible": true,
+  "corruptAndUnsafeArchivesRejectedByUnitTests": true
 }

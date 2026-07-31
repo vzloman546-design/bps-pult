@@ -26,12 +26,19 @@ function knowledgeEffectiveStatus(article) {
 }
 
 async function ensureKnowledgeSeed() {
-  const categories = await dbGetAll('knowledgeCategories');
-  if (categories.length) return;
   const now = nowISO();
-  for (const category of BpsKnowledgeLogic.DEFAULT_CATEGORIES) {
-    await dbPut('knowledgeCategories', { ...category, createdAt: now, updatedAt: now });
-  }
+  let seeded = false;
+  await runTransaction('knowledgeCategories', 'readwrite', stores => {
+    const request = stores.knowledgeCategories.count();
+    request.onsuccess = () => {
+      if (request.result) return;
+      seeded = true;
+      for (const category of BpsKnowledgeLogic.DEFAULT_CATEGORIES) {
+        stores.knowledgeCategories.put({ ...category, createdAt: now, updatedAt: now });
+      }
+    };
+  });
+  if (seeded) noteDataChange('knowledgeCategories');
 }
 window.ensureKnowledgeSeed = ensureKnowledgeSeed;
 
@@ -87,7 +94,8 @@ function knowledgeResultsHtml() {
   const articles = BpsKnowledgeLogic.filterArticles(
     state.data.knowledgeArticles,
     state.data.knowledgeCategories,
-    filters
+    filters,
+    { equipment: state.data.equipment, events: state.data.events }
   );
   const context = filters.categoryId ? knowledgeCategoryName(filters.categoryId) : filters.favorite ? 'Избранное' : filters.query ? 'Результаты поиска' : filters.showAll ? 'Все материалы' : 'Последние материалы';
   return `<div class="section-head"><div><h2 class="section-title">${esc(context)}</h2><p class="section-subtitle">${articles.length} ${plural(articles.length, 'материал', 'материала', 'материалов')}</p></div>${filters.categoryId || filters.query || filters.favorite || filters.type !== 'all' || filters.status !== 'all' ? `<button class="text-button" data-kb-action="reset-filters">Сбросить</button>` : ''}</div>
@@ -106,7 +114,7 @@ function renderKnowledge() {
       <div class="button-row knowledge-actions"><button class="button primary" data-kb-action="new-article">${icon('plus')}Новый материал</button><button class="button" data-kb-action="manage-categories">${icon('folder')}Разделы</button></div>
     </section>
     <section class="section filters knowledge-filters">
-      <div class="search-input-wrap">${icon('search')}<input id="knowledgeSearch" type="search" enterkeyhint="search" autocomplete="off" value="${esc(filters.query)}" placeholder="Ошибка, оборудование, работа или код"></div>
+      <div class="search-input-wrap">${icon('search')}<input id="knowledgeSearch" type="search" enterkeyhint="search" autocomplete="off" value="${esc(filters.query)}" placeholder="Ошибка, оборудование, работа или код" aria-label="Поиск по базе знаний"></div>
       <div class="filter-row" aria-label="Тип материала">
         <button class="chip ${filters.type === 'all' ? 'active' : ''}" data-kb-type="all">Все</button>
         ${BpsKnowledgeLogic.ARTICLE_TYPES.map(item => `<button class="chip ${filters.type === item.value ? 'active' : ''}" data-kb-type="${item.value}">${esc(item.label)}</button>`).join('')}
@@ -150,7 +158,7 @@ function openKnowledgeArticleForm(existing = null) {
       <div class="field"><label class="required" for="knowledgeTitle">Название</label><input id="knowledgeTitle" required value="${esc(article.title)}" placeholder="Например: Диагностика считывателя турникета"></div>
       <div class="form-grid two"><div class="field"><label for="knowledgeType">Тип</label><select id="knowledgeType">${BpsKnowledgeLogic.ARTICLE_TYPES.map(item => `<option value="${item.value}" ${article.type === item.value ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}</select></div><div class="field"><label class="required" for="knowledgeCategory">Раздел</label><select id="knowledgeCategory" required><option value="">Выберите раздел</option>${categoryOptions(article.categoryId)}</select></div></div>
       <div class="form-grid two"><div class="field"><label for="knowledgeStatus">Актуальность</label><select id="knowledgeStatus">${BpsKnowledgeLogic.ARTICLE_STATUSES.map(item => `<option value="${item.value}" ${article.status === item.value ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}</select></div><div class="field"><label for="knowledgeTags">Теги</label><input id="knowledgeTags" value="${esc(article.tags.join(', '))}" placeholder="ОФД, касса, срочно"></div></div>
-      <div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Добавить в избранное</strong><span>Показывать в быстром доступе</span></div><button type="button" class="switch ${article.favorite ? 'on' : ''}" id="knowledgeFavorite" role="switch" aria-checked="${article.favorite}"></button></div></div>
+      <div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Добавить в избранное</strong><span>Показывать в быстром доступе</span></div><button type="button" class="switch ${article.favorite ? 'on' : ''}" id="knowledgeFavorite" role="switch" aria-checked="${article.favorite}" aria-label="Добавить материал в избранное"></button></div></div>
     </section>
     <section class="form-section"><h3>Содержание</h3>
       <div class="field"><label for="knowledgeSummary">Кратко</label><textarea id="knowledgeSummary" class="textarea-compact" placeholder="Что это за материал и какую задачу решает">${esc(article.summary)}</textarea></div>

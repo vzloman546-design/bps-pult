@@ -72,8 +72,8 @@ window.BpsKnowledgeLogic = (() => {
       tags: tags(input.tags),
       status,
       favorite: Boolean(input.favorite),
-      linkedEquipmentIds: unique((input.linkedEquipmentIds || []).map(text)),
-      linkedEventIds: unique((input.linkedEventIds || []).map(text)),
+      linkedEquipmentIds: unique((Array.isArray(input.linkedEquipmentIds) ? input.linkedEquipmentIds : []).map(text)),
+      linkedEventIds: unique((Array.isArray(input.linkedEventIds) ? input.linkedEventIds : []).map(text)),
       versions: Array.isArray(input.versions) ? input.versions.slice(-20) : [],
       lastReviewedAt: input.lastReviewedAt || null,
       lastOpenedAt: input.lastOpenedAt || null,
@@ -106,9 +106,13 @@ window.BpsKnowledgeLogic = (() => {
     const clean = normalizeArticle(article);
     const data = {};
     VERSION_FIELDS.forEach(field => { data[field] = clean[field]; });
+    const lastNumber = clean.versions.reduce((maximum, version) => {
+      const number = Number(version?.number);
+      return Number.isFinite(number) ? Math.max(maximum, number) : maximum;
+    }, 0);
     return {
       id: `version_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
-      number: (clean.versions?.length || 0) + 1,
+      number: lastNumber + 1,
       savedAt: clean.updatedAt || new Date().toISOString(),
       data,
     };
@@ -170,24 +174,41 @@ window.BpsKnowledgeLogic = (() => {
     return result;
   }
 
-  function searchBlob(article, categories = []) {
+  function linkedContextText(article, context = {}) {
+    const equipmentById = new Map((Array.isArray(context.equipment) ? context.equipment : []).map(item => [item.id, item]));
+    const eventsById = new Map((Array.isArray(context.events) ? context.events : []).map(item => [item.id, item]));
+    const equipment = article.linkedEquipmentIds.flatMap(id => {
+      const item = equipmentById.get(id);
+      return item ? [id, item.name, item.type, item.object, item.designation, item.ip, item.serial] : [id];
+    });
+    const events = article.linkedEventIds.flatMap(id => {
+      const item = eventsById.get(id);
+      return item ? [id, item.name, item.type, item.date] : [id];
+    });
+    return [...equipment, ...events].map(text).join(' ');
+  }
+
+  function searchBlob(article, categories = [], context = {}) {
     const normalized = normalizeArticle(article);
     return [
       normalized.title, normalized.summary, normalized.appliesWhen,
       normalized.prerequisites.join(' '), normalized.steps.join(' '),
       normalized.expectedResult, normalized.troubleshooting, normalized.notes,
       normalized.tags.join(' '), categoryPath(normalized.categoryId, categories),
+      linkedContextText(normalized, context),
     ].join(' ').toLocaleLowerCase('ru-RU');
   }
 
-  function filterArticles(articles = [], categories = [], filters = {}, now = new Date()) {
+  function filterArticles(articles = [], categories = [], filters = {}, contextOrNow = {}, now = new Date()) {
+    const context = contextOrNow instanceof Date ? {} : contextOrNow;
+    const currentDate = contextOrNow instanceof Date ? contextOrNow : now;
     const query = text(filters.query).toLocaleLowerCase('ru-RU');
     const allowedCategoryIds = filters.categoryId ? descendantIds(filters.categoryId, categories) : null;
     return articles
       .map(normalizeArticle)
       .filter(article => {
-        const effective = effectiveStatus(article, now);
-        if (query && !searchBlob(article, categories).includes(query)) return false;
+        const effective = effectiveStatus(article, currentDate);
+        if (query && !searchBlob(article, categories, context).includes(query)) return false;
         if (filters.type && filters.type !== 'all' && article.type !== filters.type) return false;
         if (filters.status && filters.status !== 'all' && effective !== filters.status) return false;
         if (filters.favorite && !article.favorite) return false;
@@ -227,6 +248,6 @@ window.BpsKnowledgeLogic = (() => {
     ARTICLE_TYPES, ARTICLE_STATUSES, DEFAULT_CATEGORIES,
     normalizeCategory, normalizeArticle, validateArticle, mergeForSave,
     effectiveStatus, categoryPath, descendantIds, filterArticles,
-    categoryCounts, restoreVersion, lines, tags,
+    categoryCounts, restoreVersion, searchBlob, lines, tags,
   };
 })();

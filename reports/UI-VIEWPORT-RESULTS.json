@@ -1,52 +1,36 @@
 {
+  "version": "2.1.0",
   "viewports": {
     "320": {
-      "scrollWidth": 320,
-      "innerWidth": 320,
+      "routeRuns": 22,
+      "contentOverflowFailures": 0,
+      "formOverflowFailures": 0,
       "navPosition": "fixed",
-      "navBottom": 0,
-      "navBottomAfterScroll": 0
+      "navBottom": 0
     },
     "375": {
-      "scrollWidth": 375,
-      "innerWidth": 375,
+      "routeRuns": 22,
+      "contentOverflowFailures": 0,
+      "formOverflowFailures": 0,
       "navPosition": "fixed",
-      "navBottom": 0,
-      "navBottomAfterScroll": 0
+      "navBottom": 0
     },
     "390": {
-      "scrollWidth": 390,
-      "innerWidth": 390,
+      "routeRuns": 22,
+      "contentOverflowFailures": 0,
+      "formOverflowFailures": 0,
       "navPosition": "fixed",
-      "navBottom": 0,
-      "navBottomAfterScroll": 0
+      "navBottom": 0
     },
     "430": {
-      "scrollWidth": 430,
-      "innerWidth": 430,
+      "routeRuns": 22,
+      "contentOverflowFailures": 0,
+      "formOverflowFailures": 0,
       "navPosition": "fixed",
-      "navBottom": 0,
-      "navBottomAfterScroll": 0
+      "navBottom": 0
     }
   },
+  "themes": ["light", "dark"],
   "consoleErrors": [],
-  "pageErrors": [],
-  "checks": {
-    "modal": {
-      "appInert": true,
-      "navInert": true,
-      "activeInside": true,
-      "role": "dialog",
-      "closed": true
-    },
-    "atomicRollback": {
-      "failed": true,
-      "preserved": true
-    },
-    "undo": {
-      "gone": true,
-      "restored": true,
-      "exists": true
-    }
-  }
+  "pageErrors": []
 }

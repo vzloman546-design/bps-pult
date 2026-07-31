@@ -1,0 +1,28 @@
+{
+  "app": "БПС Пульт",
+  "version": "1.9.0-test",
+  "schemaVersion": 3,
+  "exportedAt": "2026-07-31T09:00:00.000Z",
+  "data": {
+    "entries": [],
+    "tasks": [
+      {
+        "id": "fixture_task_schema_3",
+        "title": "Проверка импорта схемы 3",
+        "object": "КПП-1",
+        "priority": "Обычный",
+        "dueAt": null,
+        "description": "Тестовая запись без рабочих данных.",
+        "completed": false,
+        "createdAt": "2026-07-31T09:00:00.000Z",
+        "updatedAt": "2026-07-31T09:00:00.000Z"
+      }
+    ],
+    "inspections": [],
+    "equipment": [],
+    "events": [],
+    "knowledgeArticles": [],
+    "knowledgeCategories": [],
+    "settings": []
+  }
+}

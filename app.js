@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 const SCHEMA_VERSION = 4;
 const DB_NAME = 'bps-pult-local';
 const DB_VERSION = 4;
@@ -29,7 +29,7 @@ const state = {
   data: { entries: [], tasks: [], inspections: [], equipment: [], events: [], knowledgeArticles: [], knowledgeCategories: [] },
 };
 
-const interactionState = { modalClosing: false, openSwipeRow: null, previousFocus: null, modalKeyHandler: null, updateRegistration: null };
+const interactionState = { modalClosing: false, modalCloseTimer: null, openSwipeRow: null, previousFocus: null, modalKeyHandler: null, updateRegistration: null };
 const runtimeErrors = [];
 const prefersReducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -216,6 +216,7 @@ async function runTransaction(storeNames, mode, executor) {
   return new Promise((resolve, reject) => {
     let result;
     let failed = false;
+    let callbackError = null;
     let tx;
     try { tx = db.transaction(names, mode, { durability: mode === 'readwrite' ? 'strict' : 'default' }); }
     catch (error) {
@@ -224,9 +225,14 @@ async function runTransaction(storeNames, mode, executor) {
     const stores = Object.fromEntries(names.map(name => [name, tx.objectStore(name)]));
     tx.oncomplete = () => { if (!failed) resolve(result); };
     tx.onerror = () => { failed = true; reject(storageError(tx.error)); };
-    tx.onabort = () => { failed = true; reject(storageError(tx.error || new DOMException('Транзакция отменена', 'AbortError'))); };
+    tx.onabort = () => { failed = true; reject(storageError(callbackError || tx.error || new DOMException('Транзакция отменена', 'AbortError'))); };
+    const abortWithError = error => {
+      callbackError = error;
+      try { tx.abort(); }
+      catch (abortError) { failed = true; reject(storageError(error || abortError)); }
+    };
     try {
-      result = executor(stores, tx, value => { result = value; });
+      result = executor(stores, tx, value => { result = value; }, abortWithError);
       if (result && typeof result.onsuccess !== 'undefined') result.onsuccess = () => { result = result.result; };
     } catch (error) {
       failed = true;
@@ -263,31 +269,92 @@ async function getAllData() {
   return result;
 }
 
-async function atomicReplaceData(data, { clearTrash = true } = {}) {
+async function atomicReplaceData(data, { clearTrash = true, settings = [] } = {}) {
   const names = clearTrash ? [...STORE_NAMES, 'trash'] : STORE_NAMES;
   await runTransaction(names, 'readwrite', stores => {
     for (const store of STORE_NAMES) {
       stores[store].clear();
       for (const item of data[store] || []) stores[store].put(item);
     }
+    for (const setting of settings) stores.settings.put(setting);
     if (clearTrash) stores.trash.clear();
   });
   noteDataChange('import');
 }
 
-async function atomicMergeData(importedData) {
-  const current = await getAllData();
-  const merged = BpsStability.mergeData(current, importedData);
-  await atomicReplaceData(merged, { clearTrash: false });
+async function atomicMergeData(importedData, { settings = [] } = {}) {
+  await runTransaction(STORE_NAMES, 'readwrite', (stores, tx, setResult, abortWithError) => {
+    const current = {};
+    let remaining = STORE_NAMES.length;
+    const finish = () => {
+      if (--remaining) return;
+      try {
+        const merged = BpsStability.mergeData(current, importedData);
+        for (const store of STORE_NAMES) {
+          stores[store].clear();
+          for (const item of merged[store] || []) stores[store].put(item);
+        }
+        for (const setting of settings) stores.settings.put(setting);
+      } catch (error) {
+        abortWithError(error);
+      }
+    };
+    for (const store of STORE_NAMES) {
+      const request = stores[store].getAll();
+      request.onsuccess = () => { current[store] = request.result; finish(); };
+    }
+  });
+  noteDataChange('import');
+}
+
+async function atomicMigrateCurrent(sourceSchema) {
+  let migrations = [];
+  await runTransaction(STORE_NAMES, 'readwrite', (stores, tx, setResult, abortWithError) => {
+    const current = {};
+    let remaining = STORE_NAMES.length;
+    const finish = () => {
+      if (--remaining) return;
+      try {
+        const migrated = BpsStability.migratePayload({
+          app:'БПС Пульт',
+          version:APP_VERSION,
+          schemaVersion:Math.min(sourceSchema, SCHEMA_VERSION),
+          data:current,
+        });
+        for (const store of STORE_NAMES) {
+          stores[store].clear();
+          for (const item of migrated.data[store] || []) stores[store].put(item);
+        }
+        migrations = migrated.migrations;
+      } catch (error) {
+        abortWithError(error);
+      }
+    };
+    for (const store of STORE_NAMES) {
+      const request = stores[store].getAll();
+      request.onsuccess = () => { current[store] = request.result; finish(); };
+    }
+  });
+  noteDataChange('migration');
+  return migrations;
+}
+
+async function putRecordsAtomically(recordsByStore) {
+  const names = Object.keys(recordsByStore).filter(store => STORE_NAMES.includes(store));
+  if (!names.length) return;
+  await runTransaction(names, 'readwrite', stores => {
+    for (const store of names) {
+      const records = Array.isArray(recordsByStore[store]) ? recordsByStore[store] : [recordsByStore[store]];
+      records.filter(Boolean).forEach(item => stores[store].put(item));
+    }
+  });
+  names.forEach(noteDataChange);
 }
 
 async function runLiveMigrations() {
   const storedSchema = Number(await getSetting('dataSchemaVersion', 1)) || 1;
   if (storedSchema >= SCHEMA_VERSION) return [];
-  const current = await getAllData();
-  const migrated = BpsStability.migratePayload({ app: 'БПС Пульт', version: APP_VERSION, schemaVersion: Math.min(storedSchema, SCHEMA_VERSION), data: current });
-  await atomicReplaceData(migrated.data, { clearTrash: false });
-  return migrated.migrations;
+  return atomicMigrateCurrent(storedSchema);
 }
 
 async function cleanupTrash() {
@@ -329,38 +396,76 @@ function toast(message, options = {}) {
 async function restoreTrashItem(trashId) {
   const item = await dbGet('trash', trashId);
   if (!item?.record || !item.store) return false;
-  const related = Array.isArray(item.related) ? item.related : [];
+  const related = (Array.isArray(item.related) ? item.related : [])
+    .filter(change => change?.store && change?.before && STORE_NAMES.includes(change.store));
   const storeNames = [item.store, 'trash', ...related.map(change => change.store)];
-  await runTransaction(storeNames, 'readwrite', stores => {
-    stores[item.store].put(item.record);
-    related.forEach(change => stores[change.store].put(change.before));
-    stores.trash.delete(trashId);
+  await runTransaction(storeNames, 'readwrite', (stores, tx, setResult, abortWithError) => {
+    const currentRelated = new Array(related.length);
+    let primary = null;
+    let remaining = related.length + 1;
+    const finish = () => {
+      if (--remaining) return;
+      try {
+        if (!primary) stores[item.store].put(item.record);
+        related.forEach((change, index) => {
+          const restored = BpsStability.reverseRelatedChange(currentRelated[index], change, nowISO());
+          if (restored) stores[change.store].put(restored);
+        });
+        stores.trash.delete(trashId);
+      } catch (error) {
+        abortWithError(error);
+      }
+    };
+    const primaryRequest = stores[item.store].get(item.record.id);
+    primaryRequest.onsuccess = () => { primary = primaryRequest.result; finish(); };
+    related.forEach((change, index) => {
+      const request = stores[change.store].get(change.before.id);
+      request.onsuccess = () => { currentRelated[index] = request.result; finish(); };
+    });
   });
   noteDataChange(item.store);
   await render();
   return true;
 }
 
-async function softDelete(store, id, label = 'Объект', related = []) {
-  const value = await dbGet(store, id);
-  if (!value) return false;
-  const cleanRelated = related.filter(change => change?.store && change?.before && change?.after);
+async function softDelete(store, id, label = 'Объект', relatedStores = [], collectRelated = null) {
+  const relatedNames = [...new Set(relatedStores.filter(name => STORE_NAMES.includes(name) && name !== store))];
   const trashId = `trash_${store}_${id}_${Date.now().toString(36)}`;
-  const trashItem = {
-    id: trashId,
-    store,
-    record: value,
-    related: cleanRelated.map(change => ({ store:change.store, before:change.before })),
-    label,
-    deletedAt: nowISO(),
-    expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
-  };
-  const storeNames = [store, 'trash', ...cleanRelated.map(change => change.store)];
-  await runTransaction(storeNames, 'readwrite', stores => {
-    stores[store].delete(id);
-    cleanRelated.forEach(change => stores[change.store].put(change.after));
-    stores.trash.put(trashItem);
+  let deleted = false;
+  await runTransaction([store, 'trash', ...relatedNames], 'readwrite', (stores, tx, setResult, abortWithError) => {
+    const source = {};
+    const requests = [{ name:store, request:stores[store].get(id), single:true }, ...relatedNames.map(name => ({ name, request:stores[name].getAll(), single:false }))];
+    let remaining = requests.length;
+    const finish = () => {
+      if (--remaining) return;
+      try {
+        const value = source[store];
+        if (!value) return;
+        const related = typeof collectRelated === 'function' ? collectRelated(source, value) : [];
+        const cleanRelated = related.filter(change => change?.store && change?.before && change?.after && stores[change.store]);
+        const deletedAt = nowISO();
+        const trashItem = {
+          id: trashId,
+          store,
+          record: value,
+          related: cleanRelated.map(change => ({ store:change.store, before:change.before, after:change.after })),
+          label,
+          deletedAt,
+          expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+        };
+        stores[store].delete(id);
+        cleanRelated.forEach(change => stores[change.store].put(change.after));
+        stores.trash.put(trashItem);
+        deleted = true;
+      } catch (error) {
+        abortWithError(error);
+      }
+    };
+    requests.forEach(({ name, request }) => {
+      request.onsuccess = () => { source[name] = request.result; finish(); };
+    });
   });
+  if (!deleted) return false;
   noteDataChange(store);
   await render();
   toast(`${label} удалён`, {
@@ -374,24 +479,20 @@ async function softDelete(store, id, label = 'Объект', related = []) {
 }
 
 async function deleteEntryWithUndo(id) {
-  const related = state.data.tasks.filter(item => item.linkedEntryId === id).map(before => ({
-    store:'tasks', before, after:{...before, linkedEntryId:null, updatedAt:nowISO()}
-  }));
-  return softDelete('entries', id, 'Запись', related);
+  return softDelete('entries', id, 'Запись', ['tasks'], source =>
+    BpsStability.relatedChangesForDelete('entries', id, source, nowISO()));
 }
 async function deleteEventWithUndo(id) {
-  const related = [];
-  state.data.entries.filter(item=>item.eventId===id).forEach(before=>related.push({store:'entries',before,after:{...before,eventId:null,updatedAt:nowISO()}}));
-  state.data.tasks.filter(item=>item.eventId===id).forEach(before=>related.push({store:'tasks',before,after:{...before,eventId:null,updatedAt:nowISO()}}));
-  state.data.inspections.filter(item=>item.eventId===id).forEach(before=>related.push({store:'inspections',before,after:{...before,eventId:null,updatedAt:nowISO()}}));
-  state.data.knowledgeArticles.filter(item=>(item.linkedEventIds||[]).includes(id)).forEach(before=>related.push({store:'knowledgeArticles',before,after:{...before,linkedEventIds:before.linkedEventIds.filter(value=>value!==id),updatedAt:nowISO()}}));
-  return softDelete('events', id, 'Мероприятие', related);
+  return softDelete('events', id, 'Мероприятие', ['entries','tasks','inspections','knowledgeArticles'], source =>
+    BpsStability.relatedChangesForDelete('events', id, source, nowISO()));
 }
 async function deleteEquipmentWithUndo(id) {
-  const related = state.data.knowledgeArticles.filter(item=>(item.linkedEquipmentIds||[]).includes(id)).map(before=>({
-    store:'knowledgeArticles', before, after:{...before,linkedEquipmentIds:before.linkedEquipmentIds.filter(value=>value!==id),updatedAt:nowISO()}
-  }));
-  return softDelete('equipment', id, 'Оборудование', related);
+  return softDelete('equipment', id, 'Оборудование', ['knowledgeArticles'], source =>
+    BpsStability.relatedChangesForDelete('equipment', id, source, nowISO()));
+}
+async function deleteInspectionWithUndo(id) {
+  return softDelete('inspections', id, 'Техосмотр', ['tasks'], source =>
+    BpsStability.relatedChangesForDelete('inspections', id, source, nowISO()));
 }
 
 
@@ -573,7 +674,7 @@ function renderJournal() {
   const groups = Object.groupBy ? Object.groupBy(entries, e => dayKey(e.date)) : entries.reduce((acc,e)=>((acc[dayKey(e.date)] ||= []).push(e),acc),{});
   return `
     <section class="section filters">
-      <div class="search-input-wrap">${icon('search')}<input id="journalSearch" type="search" placeholder="Поиск по журналу" value="${esc(state.journal.query)}" autocomplete="off"></div>
+      <div class="search-input-wrap">${icon('search')}<input id="journalSearch" type="search" aria-label="Поиск по журналу" placeholder="Поиск по журналу" value="${esc(state.journal.query)}" autocomplete="off"></div>
       <div class="form-grid two">
         <select id="journalType" aria-label="Тип записи">${optionsHtml(['Все типы',...ENTRY_TYPES],state.journal.type)}</select>
         <select id="journalObject" aria-label="Объект">${optionsHtml(['Все объекты',...OBJECTS],state.journal.object)}</select>
@@ -760,7 +861,7 @@ function renderInstall() {
   const standalone = isStandalone();
   return `<section class="page-lead"><p>Добавьте сайт на экран «Домой». После первого открытия оболочка сохранится на iPhone и будет работать без интернета.</p></section>
     <section class="section"><div class="card">${standalone ? `<div class="notice-card"><div class="notice-icon success">${icon('check')}</div><div><h3>Приложение уже установлено</h3><p>Вы открыли его в автономном режиме с экрана «Домой».</p></div></div>` : `<div class="detail-grid"><div class="detail-field"><div class="detail-field-label">Шаг 1</div><div class="detail-field-value">Откройте эту страницу именно в Safari.</div></div><div class="detail-field"><div class="detail-field-label">Шаг 2</div><div class="detail-field-value">Нажмите кнопку «Поделиться» в нижней панели Safari.</div></div><div class="detail-field"><div class="detail-field-label">Шаг 3</div><div class="detail-field-value">Выберите «На экран Домой», затем «Добавить».</div></div><div class="detail-field"><div class="detail-field-label">Шаг 4</div><div class="detail-field-value">Откройте новую иконку один раз при наличии интернета. После этого включите авиарежим и проверьте запуск.</div></div></div>`}</div></section>
-    <section class="section"><div class="card notice-card"><div class="notice-icon">${icon('alert')}</div><div><h3>Важно о данных</h3><p>Записи хранятся локально. Перед удалением приложения сделайте экспорт JSON в разделе «Настройки и данные».</p></div></div></section>`;
+    <section class="section"><div class="card notice-card"><div class="notice-icon">${icon('alert')}</div><div><h3>Важно о данных</h3><p>Записи хранятся локально. Перед удалением приложения создайте архив .bpsbackup в разделе «Настройки и данные».</p></div></div></section>`;
 }
 
 function modalFocusable(node) {
@@ -776,6 +877,11 @@ function setBackgroundInert(value) {
   }
 }
 function openModal(title, bodyHtml, options = {}) {
+  if (interactionState.modalCloseTimer) {
+    clearTimeout(interactionState.modalCloseTimer);
+    interactionState.modalCloseTimer = null;
+    interactionState.modalClosing = false;
+  }
   if (document.querySelector('[data-modal-backdrop]')) closeModal({ immediate: true, restoreFocus: false });
   interactionState.previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const template = document.getElementById('modalTemplate');
@@ -798,7 +904,8 @@ function openModal(title, bodyHtml, options = {}) {
     const focusable = modalFocusable(node);
     if (!focusable.length) { event.preventDefault(); node.querySelector('[data-sheet]')?.focus(); return; }
     const first = focusable[0], last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    if (!node.contains(document.activeElement)) { event.preventDefault(); (event.shiftKey ? last : first).focus(); }
+    else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
   };
   document.addEventListener('keydown', interactionState.modalKeyHandler, true);
@@ -817,6 +924,8 @@ function closeModal(options = {}) {
   interactionState.modalClosing = true;
   const previousFocus = interactionState.previousFocus;
   const finish = () => {
+    if (interactionState.modalCloseTimer) clearTimeout(interactionState.modalCloseTimer);
+    interactionState.modalCloseTimer = null;
     if (interactionState.modalKeyHandler) document.removeEventListener('keydown', interactionState.modalKeyHandler, true);
     interactionState.modalKeyHandler = null;
     document.getElementById('modalRoot').innerHTML='';
@@ -830,7 +939,7 @@ function closeModal(options = {}) {
   if (options.immediate || prefersReducedMotion()) return finish();
   node.classList.add('closing');
   node.querySelector('[data-sheet]')?.classList.add('closing');
-  setTimeout(finish, 230);
+  interactionState.modalCloseTimer = setTimeout(finish, 230);
 }
 function setupSheetGestures(node) {
   const sheet = node.querySelector('[data-sheet]');
@@ -883,7 +992,7 @@ function confirmModal(title, message, confirmText, onConfirm, dangerous = false)
 }
 
 function photoPickerHtml(photos) {
-  return `<div class="photo-grid" id="photoGrid">${photos.map((p,i)=>`<div class="photo-thumb"><img src="${p}" alt="Фото ${i+1}"><button type="button" class="photo-remove" data-remove-photo="${i}" aria-label="Удалить фото">${icon('close')}</button></div>`).join('')}${photos.length<3?`<label class="photo-add">${icon('camera')}<input type="file" id="photoInput" accept="image/*" multiple></label>`:''}</div><div class="field-help">До 3 фотографий. Они сжимаются и сохраняются только на устройстве.</div>`;
+  return `<div class="photo-grid" id="photoGrid">${photos.map((p,i)=>`<div class="photo-thumb"><img src="${esc(p)}" alt="Фото ${i+1}"><button type="button" class="photo-remove" data-remove-photo="${i}" aria-label="Удалить фото ${i+1}">${icon('close')}</button></div>`).join('')}${photos.length<3?`<label class="photo-add">${icon('camera')}<input type="file" id="photoInput" accept="image/*" multiple aria-label="Добавить фотографии"></label>`:''}</div><div class="field-help">До 3 фотографий. Они сжимаются и сохраняются только на устройстве.</div>`;
 }
 async function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
@@ -949,7 +1058,7 @@ function openEntryForm(existing = null) {
     <div class="field"><label class="required" for="entryDescription">Описание</label><textarea id="entryDescription" required placeholder="Что произошло и что было сделано">${esc(existing?.description||'')}</textarea><div class="field-help">Можно использовать диктовку клавиатуры iPhone.</div></div>
     <div class="form-grid two"><div class="field"><label class="required" for="entryStatus">Статус</label><select id="entryStatus" required>${optionsHtml(ENTRY_STATUSES,existing?.status||'Информация')}</select></div><div class="field"><label class="required" for="entryDate">Дата и время</label><input id="entryDate" type="datetime-local" required value="${localDateTimeValue(existing?.date?new Date(existing.date):new Date())}"></div></div>
     <div class="field"><label>Фотографии</label><div id="entryPhotos">${photoPickerHtml(photos)}</div></div>
-    ${!existing?.id?`<div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Создать связанную задачу</strong><span>Напомнить о повторной проверке</span></div><button type="button" class="switch" id="linkedTaskSwitch" aria-label="Создать задачу"></button></div><div id="linkedTaskFields" hidden><div class="form-grid two nested-grid"><div class="field"><label for="linkedDue">Срок</label><input type="datetime-local" id="linkedDue"></div><div class="field"><label for="linkedPriority">Приоритет</label><select id="linkedPriority">${optionsHtml(PRIORITIES,'Обычный')}</select></div></div></div></div>`:''}
+    ${!existing?.id?`<div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Создать связанную задачу</strong><span>Напомнить о повторной проверке</span></div><button type="button" class="switch" id="linkedTaskSwitch" role="switch" aria-checked="false" aria-label="Создать связанную задачу"></button></div><div id="linkedTaskFields" hidden><div class="form-grid two nested-grid"><div class="field"><label for="linkedDue">Срок</label><input type="datetime-local" id="linkedDue"></div><div class="field"><label for="linkedPriority">Приоритет</label><select id="linkedPriority">${optionsHtml(PRIORITIES,'Обычный')}</select></div></div></div></div>`:''}
     ${existing?.id?`<button type="button" class="button danger full" data-delete-entry="${esc(existing.id)}">${icon('trash')}Удалить запись</button>`:''}
   </form>`;
   const node = openModal(existing?.id?'Редактировать запись':'Новая запись', body, { actionHtml:'<button class="text-button" id="saveEntry">Сохранить</button>' });
@@ -960,7 +1069,7 @@ function openEntryForm(existing = null) {
   };
   renderPhotos();
   const sw=node.querySelector('#linkedTaskSwitch');
-  if(sw) sw.addEventListener('click',()=>{sw.classList.toggle('on');node.querySelector('#linkedTaskFields').hidden=!sw.classList.contains('on');});
+  if(sw) sw.addEventListener('click',()=>{sw.classList.toggle('on');const enabled=sw.classList.contains('on');sw.setAttribute('aria-checked',String(enabled));node.querySelector('#linkedTaskFields').hidden=!enabled;});
   node.querySelector('#saveEntry').addEventListener('click',async()=>{
     const form=node.querySelector('#entryForm'); if(!form.reportValidity()) return;
     const record={
@@ -969,10 +1078,12 @@ function openEntryForm(existing = null) {
       status:node.querySelector('#entryStatus').value, date:new Date(node.querySelector('#entryDate').value).toISOString(), eventId:node.querySelector('#linkedEvent')?.value||null, photos,
       createdAt:existing?.createdAt||nowISO(), updatedAt:nowISO(), sample:existing?.sample||false
     };
-    await dbPut('entries',record);
+    let linkedTask = null;
     if(!existing?.id && sw?.classList.contains('on')) {
-      await dbPut('tasks',{id:uid('task'),title:`${record.object}${record.equipment?` · ${record.equipment}`:''}: ${record.status}`,object:record.object,description:record.description,dueAt:node.querySelector('#linkedDue').value?new Date(node.querySelector('#linkedDue').value).toISOString():null,priority:node.querySelector('#linkedPriority').value,completed:false,eventId:record.eventId||null,linkedEntryId:record.id,createdAt:nowISO(),updatedAt:nowISO()});
+      linkedTask={id:uid('task'),title:`${record.object}${record.equipment?` · ${record.equipment}`:''}: ${record.status}`,object:record.object,description:record.description,dueAt:node.querySelector('#linkedDue').value?new Date(node.querySelector('#linkedDue').value).toISOString():null,priority:node.querySelector('#linkedPriority').value,completed:false,eventId:record.eventId||null,linkedEntryId:record.id,createdAt:nowISO(),updatedAt:nowISO()};
     }
+    if (linkedTask) await putRecordsAtomically({ entries:record, tasks:linkedTask });
+    else await dbPut('entries',record);
     closeModal();toast(existing?.id?'Запись обновлена':'Запись сохранена');await render();
   });
   node.querySelector('[data-delete-entry]')?.addEventListener('click',async()=>{closeModal({immediate:true});await deleteEntryWithUndo(existing.id);});
@@ -981,7 +1092,7 @@ function openEntryForm(existing = null) {
 function openEntryDetail(id) {
   const e=state.data.entries.find(x=>x.id===id); if(!e)return;
   const photos=e.photos||[];
-  const node=openModal('Запись журнала',`<div class="detail-hero"><span class="status-pill ${statusTone(e.status)}">${esc(e.status)}</span><h3 class="detail-title">${esc(e.equipment||e.type)}</h3><div class="detail-meta">${esc(e.object)} · ${formatFullDate(e.date)}</div><div class="detail-grid"><div class="detail-field"><div class="detail-field-label">Тип</div><div class="detail-field-value">${esc(e.type)}</div></div><div class="detail-field"><div class="detail-field-label">Описание</div><div class="detail-field-value">${nl2br(e.description)}</div></div></div></div>${photos.length?`<div class="modal-section"><h3 class="modal-section-title">Фотографии</h3><div class="photo-gallery">${photos.map(p=>`<img src="${p}" alt="Фото записи">`).join('')}</div></div>`:''}<div class="button-row"><button class="button" id="editEntry">${icon('edit')}Редактировать</button><button class="button" id="taskFromEntry">${icon('task')}Создать задачу</button></div>`);
+  const node=openModal('Запись журнала',`<div class="detail-hero"><span class="status-pill ${statusTone(e.status)}">${esc(e.status)}</span><h3 class="detail-title">${esc(e.equipment||e.type)}</h3><div class="detail-meta">${esc(e.object)} · ${formatFullDate(e.date)}</div><div class="detail-grid"><div class="detail-field"><div class="detail-field-label">Тип</div><div class="detail-field-value">${esc(e.type)}</div></div><div class="detail-field"><div class="detail-field-label">Описание</div><div class="detail-field-value">${nl2br(e.description)}</div></div></div></div>${photos.length?`<div class="modal-section"><h3 class="modal-section-title">Фотографии</h3><div class="photo-gallery">${photos.map((p,index)=>`<img src="${esc(p)}" alt="Фото записи ${index+1}">`).join('')}</div></div>`:''}<div class="button-row"><button class="button" id="editEntry">${icon('edit')}Редактировать</button><button class="button" id="taskFromEntry">${icon('task')}Создать задачу</button></div>`);
   node.querySelector('#editEntry').addEventListener('click',()=>{closeModal();openEntryForm(e);});
   node.querySelector('#taskFromEntry').addEventListener('click',()=>{closeModal();openTaskForm({object:e.object,description:e.description,eventId:e.eventId||null,linkedEntryId:e.id,title:`${e.equipment||e.type}: ${e.status}`});});
 }
@@ -992,7 +1103,7 @@ function openTaskForm(existing = null) {
   const node=openModal(preset.id?'Редактировать задачу':'Новая задача',body,{actionHtml:'<button class="text-button" id="saveTask">Сохранить</button>'});
   node.querySelector('#saveTask').addEventListener('click',async()=>{
     const form=node.querySelector('#taskForm');if(!form.reportValidity())return;
-    await dbPut('tasks',{id:preset.id||uid('task'),title:node.querySelector('#taskTitle').value.trim(),object:node.querySelector('#taskObject').value,priority:node.querySelector('#taskPriority').value,dueAt:node.querySelector('#taskDue').value?new Date(node.querySelector('#taskDue').value).toISOString():null,description:node.querySelector('#taskDescription').value.trim(),completed:preset.completed||false,completedAt:preset.completedAt||null,eventId:node.querySelector('#linkedEvent')?.value||null,linkedEntryId:preset.linkedEntryId||null,createdAt:preset.createdAt||nowISO(),updatedAt:nowISO(),sample:preset.sample||false});
+    await dbPut('tasks',{id:preset.id||uid('task'),title:node.querySelector('#taskTitle').value.trim(),object:node.querySelector('#taskObject').value,priority:node.querySelector('#taskPriority').value,dueAt:node.querySelector('#taskDue').value?new Date(node.querySelector('#taskDue').value).toISOString():null,description:node.querySelector('#taskDescription').value.trim(),completed:preset.completed||false,completedAt:preset.completedAt||null,eventId:node.querySelector('#linkedEvent')?.value||null,linkedEntryId:preset.linkedEntryId||null,linkedInspectionId:preset.linkedInspectionId||null,createdAt:preset.createdAt||nowISO(),updatedAt:nowISO(),sample:preset.sample||false});
     closeModal();toast(preset.id?'Задача обновлена':'Задача создана');await render();
   });
   node.querySelector('[data-delete-task]')?.addEventListener('click',async()=>{closeModal({immediate:true});await softDelete('tasks',preset.id,'Задача');});
@@ -1008,25 +1119,28 @@ function openInspectionForm(existing = null) {
   const photos=[...(existing?.photos||[])];
   const values=existing?.items?.map(x=>({...x}))||INSPECTION_ITEMS.map(name=>({name,status:'skip'}));
   const checklist=()=>`<div class="checklist">${values.map((item,i)=>`<div class="check-row"><div class="check-label">${esc(item.name)}</div><div class="check-options">${[['good','Исправно'],['issue','Замечание'],['skip','Не проверено']].map(([v,l])=>`<button type="button" class="check-option ${item.status===v?`active ${v}`:''}" data-check-index="${i}" data-check-value="${v}">${l}</button>`).join('')}</div></div>`).join('')}</div>`;
-  const body=`<form id="inspectionForm">${eventSelectField(existing?.eventId)}<div class="form-grid two"><div class="field"><label class="required" for="inspectionObject">Объект</label><select id="inspectionObject" required>${optionsHtml(OBJECTS,existing?.object||'КПП-1')}</select></div><div class="field"><label class="required" for="inspectionDate">Дата и время</label><input id="inspectionDate" type="datetime-local" required value="${localDateTimeValue(existing?.date?new Date(existing.date):new Date())}"></div></div><div class="field"><label class="required" for="inspectionEquipment">Оборудование</label><input id="inspectionEquipment" required value="${esc(existing?.equipment||'')}" placeholder="Например: турникеты №1–8"></div><div class="field"><label>Чек-лист</label><div id="inspectionChecklist">${checklist()}</div></div><div class="field"><label for="inspectionConclusion">Заключение и замечания</label><textarea id="inspectionConclusion" placeholder="Опишите обнаруженные недостатки и выполненные действия">${esc(existing?.conclusion||'')}</textarea></div><div class="field"><label>Фотографии</label><div id="inspectionPhotos">${photoPickerHtml(photos)}</div></div><div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Создать задачу по замечаниям</strong><span>Доступно, если есть замечания</span></div><button type="button" class="switch" id="inspectionTaskSwitch"></button></div></div>${existing?`<button type="button" class="button danger full" data-delete-inspection="${esc(existing.id)}">${icon('trash')}Удалить осмотр</button>`:''}</form>`;
+  const body=`<form id="inspectionForm">${eventSelectField(existing?.eventId)}<div class="form-grid two"><div class="field"><label class="required" for="inspectionObject">Объект</label><select id="inspectionObject" required>${optionsHtml(OBJECTS,existing?.object||'КПП-1')}</select></div><div class="field"><label class="required" for="inspectionDate">Дата и время</label><input id="inspectionDate" type="datetime-local" required value="${localDateTimeValue(existing?.date?new Date(existing.date):new Date())}"></div></div><div class="field"><label class="required" for="inspectionEquipment">Оборудование</label><input id="inspectionEquipment" required value="${esc(existing?.equipment||'')}" placeholder="Например: турникеты №1–8"></div><div class="field"><label>Чек-лист</label><div id="inspectionChecklist">${checklist()}</div></div><div class="field"><label for="inspectionConclusion">Заключение и замечания</label><textarea id="inspectionConclusion" placeholder="Опишите обнаруженные недостатки и выполненные действия">${esc(existing?.conclusion||'')}</textarea></div><div class="field"><label>Фотографии</label><div id="inspectionPhotos">${photoPickerHtml(photos)}</div></div><div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Создать задачу по замечаниям</strong><span>Доступно, если есть замечания</span></div><button type="button" class="switch" id="inspectionTaskSwitch" role="switch" aria-checked="false" aria-label="Создать задачу по замечаниям"></button></div></div>${existing?`<button type="button" class="button danger full" data-delete-inspection="${esc(existing.id)}">${icon('trash')}Удалить осмотр</button>`:''}</form>`;
   const node=openModal(existing?'Редактировать осмотр':'Новый техосмотр',body,{actionHtml:'<button class="text-button" id="saveInspection">Сохранить</button>'});
   const bindChecks=()=>node.querySelectorAll('[data-check-index]').forEach(btn=>btn.addEventListener('click',()=>{values[Number(btn.dataset.checkIndex)].status=btn.dataset.checkValue;node.querySelector('#inspectionChecklist').innerHTML=checklist();bindChecks();}));bindChecks();
   const renderPhotos=()=>{node.querySelector('#inspectionPhotos').innerHTML=photoPickerHtml(photos);node.querySelector('#photoInput')?.addEventListener('change',e=>handlePhotoFiles(e.target.files,photos,renderPhotos));node.querySelectorAll('[data-remove-photo]').forEach(b=>b.addEventListener('click',()=>{photos.splice(Number(b.dataset.removePhoto),1);renderPhotos();}));};renderPhotos();
-  const sw=node.querySelector('#inspectionTaskSwitch');sw.addEventListener('click',()=>sw.classList.toggle('on'));
+  const sw=node.querySelector('#inspectionTaskSwitch');sw.addEventListener('click',()=>{sw.classList.toggle('on');sw.setAttribute('aria-checked',String(sw.classList.contains('on')));});
   node.querySelector('#saveInspection').addEventListener('click',async()=>{
     const form=node.querySelector('#inspectionForm');if(!form.reportValidity())return;
     const record={id:existing?.id||uid('inspection'),object:node.querySelector('#inspectionObject').value,equipment:node.querySelector('#inspectionEquipment').value.trim(),date:new Date(node.querySelector('#inspectionDate').value).toISOString(),eventId:node.querySelector('#linkedEvent')?.value||null,items:values,conclusion:node.querySelector('#inspectionConclusion').value.trim(),photos,createdAt:existing?.createdAt||nowISO(),updatedAt:nowISO(),sample:existing?.sample||false};
-    await dbPut('inspections',record);
     const issues=values.filter(x=>x.status==='issue');
-    if(sw.classList.contains('on')&&issues.length) await dbPut('tasks',{id:uid('task'),title:`Устранить замечания: ${record.equipment}`,object:record.object,priority:'Важный',dueAt:null,description:`Замечания: ${issues.map(x=>x.name).join(', ')}.${record.conclusion?`\n${record.conclusion}`:''}`,completed:false,eventId:record.eventId||null,linkedInspectionId:record.id,createdAt:nowISO(),updatedAt:nowISO()});
+    const linkedTask=sw.classList.contains('on')&&issues.length
+      ? {id:uid('task'),title:`Устранить замечания: ${record.equipment}`,object:record.object,priority:'Важный',dueAt:null,description:`Замечания: ${issues.map(x=>x.name).join(', ')}.${record.conclusion?`\n${record.conclusion}`:''}`,completed:false,eventId:record.eventId||null,linkedInspectionId:record.id,createdAt:nowISO(),updatedAt:nowISO()}
+      : null;
+    if (linkedTask) await putRecordsAtomically({ inspections:record, tasks:linkedTask });
+    else await dbPut('inspections',record);
     closeModal();toast(existing?'Осмотр обновлён':'Техосмотр сохранён');await render();
   });
-  node.querySelector('[data-delete-inspection]')?.addEventListener('click',async()=>{closeModal({immediate:true});await softDelete('inspections',existing.id,'Техосмотр');});
+  node.querySelector('[data-delete-inspection]')?.addEventListener('click',async()=>{closeModal({immediate:true});await deleteInspectionWithUndo(existing.id);});
 }
 function openInspectionDetail(id) {
   const i=state.data.inspections.find(x=>x.id===id);if(!i)return;
   const issues=i.items.filter(x=>x.status==='issue');
-  const node=openModal('Техосмотр',`<div class="detail-hero"><span class="status-pill ${issues.length?'warning':'success'}">${issues.length?`${issues.length} замечаний`:'Нарушений нет'}</span><h3 class="detail-title">${esc(i.equipment)}</h3><div class="detail-meta">${esc(i.object)} · ${formatFullDate(i.date)}</div></div><div class="modal-section"><h3 class="modal-section-title">Результаты</h3><div class="list-card">${i.items.map(x=>`<div class="list-row"><span class="row-icon ${x.status==='good'?'success':x.status==='issue'?'warning':''}">${icon(x.status==='good'?'check':x.status==='issue'?'alert':'more')}</span><span class="list-row-main"><span class="list-row-title">${esc(x.name)}</span><span class="list-row-meta">${x.status==='good'?'Исправно':x.status==='issue'?'Замечание':'Не проверено'}</span></span></div>`).join('')}</div></div>${i.conclusion?`<div class="detail-field"><div class="detail-field-label">Заключение</div><div class="detail-field-value">${nl2br(i.conclusion)}</div></div>`:''}${i.photos?.length?`<div class="modal-section"><h3 class="modal-section-title">Фотографии</h3><div class="photo-gallery">${i.photos.map(p=>`<img src="${p}" alt="Фото техосмотра">`).join('')}</div></div>`:''}<button class="button full" id="editInspection">${icon('edit')}Редактировать</button>`);
+  const node=openModal('Техосмотр',`<div class="detail-hero"><span class="status-pill ${issues.length?'warning':'success'}">${issues.length?`${issues.length} замечаний`:'Нарушений нет'}</span><h3 class="detail-title">${esc(i.equipment)}</h3><div class="detail-meta">${esc(i.object)} · ${formatFullDate(i.date)}</div></div><div class="modal-section"><h3 class="modal-section-title">Результаты</h3><div class="list-card">${i.items.map(x=>`<div class="list-row"><span class="row-icon ${x.status==='good'?'success':x.status==='issue'?'warning':''}">${icon(x.status==='good'?'check':x.status==='issue'?'alert':'more')}</span><span class="list-row-main"><span class="list-row-title">${esc(x.name)}</span><span class="list-row-meta">${x.status==='good'?'Исправно':x.status==='issue'?'Замечание':'Не проверено'}</span></span></div>`).join('')}</div></div>${i.conclusion?`<div class="detail-field"><div class="detail-field-label">Заключение</div><div class="detail-field-value">${nl2br(i.conclusion)}</div></div>`:''}${i.photos?.length?`<div class="modal-section"><h3 class="modal-section-title">Фотографии</h3><div class="photo-gallery">${i.photos.map((p,index)=>`<img src="${esc(p)}" alt="Фото техосмотра ${index+1}">`).join('')}</div></div>`:''}<button class="button full" id="editInspection">${icon('edit')}Редактировать</button>`);
   node.querySelector('#editInspection').addEventListener('click',()=>{closeModal();openInspectionForm(i);});
 }
 
@@ -1101,13 +1215,14 @@ async function readBackupFile(file) {
 }
 
 async function importValidatedData(validation, mode) {
-  if (mode === 'merge') await atomicMergeData(validation.payload.data);
-  else await atomicReplaceData(validation.payload.data);
-  await setSetting('dataSchemaVersion', SCHEMA_VERSION);
-  await setSetting('lastImportAt', nowISO());
-  if (window.ensureKnowledgeSeed) await window.ensureKnowledgeSeed();
-  await applyStoredTheme();
-  await render();
+  const importedAt = nowISO();
+  const settings = [
+    { key:'dataSchemaVersion', value:SCHEMA_VERSION },
+    { key:'lastImportAt', value:importedAt },
+  ];
+  if (mode === 'merge') await atomicMergeData(validation.payload.data, { settings });
+  else await atomicReplaceData(validation.payload.data, { settings });
+  return importedAt;
 }
 
 async function openImportPreview(file) {
@@ -1142,6 +1257,14 @@ async function openImportPreview(file) {
       await importValidatedData(loaded.validation, mode);
       closeModal({ immediate:true });
       toast('Данные успешно восстановлены');
+      try {
+        if (window.ensureKnowledgeSeed) await window.ensureKnowledgeSeed();
+        await applyStoredTheme();
+        await render();
+      } catch (postImportError) {
+        rememberRuntimeError(postImportError, 'post-import');
+        toast('Данные восстановлены. Перезапустите приложение для обновления экрана.', { duration:8000 });
+      }
     } catch (error) {
       button.disabled = false; button.textContent = 'Повторить восстановление';
       toast(error.message || 'Ошибка восстановления');
@@ -1180,7 +1303,7 @@ async function addSamples() {
   sampleEvent.cashDesks[1].mode='closed';
   sampleEvent.checklist=BpsEventLogic.generateChecklist(sampleEvent);
   samples.events=[sampleEvent];
-  for(const [store,items] of Object.entries(samples))for(const item of items)await dbPut(store,item);toast('Примеры добавлены');await render();
+  await putRecordsAtomically(samples);toast('Примеры добавлены');await render();
 }
 async function removeSamples() {
   for(const store of ['entries','tasks','inspections','equipment','events','knowledgeArticles']) { const all=await dbGetAll(store);for(const item of all.filter(x=>x.sample))await dbDelete(store,item.id); }
@@ -1270,7 +1393,7 @@ async function handleAppAction(action, id) {
   else if(action==='edit-inspection'){const item=state.data.inspections.find(x=>x.id===id);if(item)openInspectionForm(item);}
   else if(action==='edit-equipment'){const item=state.data.equipment.find(x=>x.id===id);if(item)openEquipmentForm(item);}
   else if(action==='delete-entry')await deleteEntryWithUndo(id);
-  else if(action==='delete-inspection')await softDelete('inspections',id,'Техосмотр');
+  else if(action==='delete-inspection')await deleteInspectionWithUndo(id);
   else if(action==='delete-equipment')await deleteEquipmentWithUndo(id);
   else if(action==='route')go(id);
   else if(action==='toggle-task'){const t=state.data.tasks.find(x=>x.id===id);if(t){t.completed=!t.completed;t.completedAt=t.completed?nowISO():null;t.updatedAt=nowISO();await dbPut('tasks',t);toast(t.completed?'Задача выполнена':'Задача возвращена');await render();}}

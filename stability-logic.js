@@ -9,24 +9,36 @@
   const DATA_STORES = ['entries', 'tasks', 'inspections', 'equipment', 'events', 'knowledgeArticles', 'knowledgeCategories', 'settings'];
   const BACKUP_FORMAT = 2;
   const APP_NAME = 'БПС Пульт';
+  const SAFE_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif']);
 
   const clone = value => typeof structuredClone === 'function'
     ? structuredClone(value)
     : JSON.parse(JSON.stringify(value));
   const text = value => String(value ?? '').trim();
   const iso = value => {
-    const date = new Date(value || Date.now());
-    return Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString();
+    if (!value) return new Date().toISOString();
+    const date = new Date(value);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : text(value);
   };
   const nullableIso = value => {
     if (!value) return null;
     const date = new Date(value);
-    return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+    return Number.isFinite(date.getTime()) ? date.toISOString() : text(value);
   };
   const array = value => Array.isArray(value) ? value : [];
   const record = value => value && typeof value === 'object' && !Array.isArray(value);
   const uniqueStrings = value => [...new Set(array(value).map(text).filter(Boolean))];
   const stableId = (prefix, fallback) => text(fallback) || `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+  const parseImageDataUrl = value => {
+    const match = /^data:([^;,]+);base64,([a-z0-9+/]+={0,2})$/i.exec(String(value || ''));
+    if (!match || !SAFE_IMAGE_MIMES.has(match[1].toLowerCase()) || match[2].length % 4 === 1) {
+      throw new Error('Некорректное или небезопасное изображение в резервной копии.');
+    }
+    return { mime: match[1].toLowerCase(), base64: match[2] };
+  };
+  const isSafeImageDataUrl = value => {
+    try { parseImageDataUrl(value); return true; } catch (_) { return false; }
+  };
 
   function normalizeRecord(store, input = {}) {
     const item = record(input) ? clone(input) : {};
@@ -42,7 +54,7 @@
       status: text(item.status) || 'Информация',
       date: iso(item.date),
       eventId: text(item.eventId) || null,
-      photos: array(item.photos).filter(value => typeof value === 'string' || record(value)),
+      photos: array(item.photos).filter(value => typeof value === 'string' && isSafeImageDataUrl(value)),
       createdAt, updatedAt,
     };
     if (store === 'tasks') return {
@@ -57,6 +69,7 @@
       completedAt: item.completed ? nullableIso(item.completedAt || item.updatedAt) : null,
       eventId: text(item.eventId) || null,
       linkedEntryId: text(item.linkedEntryId) || null,
+      linkedInspectionId: text(item.linkedInspectionId) || null,
       createdAt, updatedAt,
     };
     if (store === 'inspections') return {
@@ -66,9 +79,9 @@
       equipment: text(item.equipment),
       date: iso(item.date),
       eventId: text(item.eventId) || null,
-      items: array(item.items).map(row => ({ name: text(row?.name), status: ['good', 'issue', 'pending'].includes(row?.status) ? row.status : 'pending' })).filter(row => row.name),
+      items: array(item.items).map(row => ({ name: text(row?.name), status: ['good', 'issue', 'pending', 'skip'].includes(row?.status) ? row.status : 'pending' })).filter(row => row.name),
       conclusion: text(item.conclusion),
-      photos: array(item.photos).filter(value => typeof value === 'string' || record(value)),
+      photos: array(item.photos).filter(value => typeof value === 'string' && isSafeImageDataUrl(value)),
       createdAt, updatedAt,
     };
     if (store === 'equipment') return {
@@ -175,6 +188,13 @@
           if (!key) rawErrors.push(`${store}[${index}]: отсутствует идентификатор.`);
           else if (seenRaw.has(key)) rawErrors.push(`${store}: повторяется идентификатор ${key}.`);
           else seenRaw.add(key);
+          if (['entries', 'inspections'].includes(store)) {
+            array(item?.photos).forEach((photo, photoIndex) => {
+              if (typeof photo !== 'string' || !isSafeImageDataUrl(photo)) {
+                rawErrors.push(`${store}[${index}].photos[${photoIndex}]: небезопасный или неподдерживаемый формат изображения.`);
+              }
+            });
+          }
         });
       }
     }
@@ -225,7 +245,9 @@
           if (key === 'dataSchemaVersion') map.set(key, { key, value: CURRENT_SCHEMA });
           continue;
         }
-        if (incomingTime >= existingTime) map.set(key, clone(item));
+        if (Number.isFinite(incomingTime) && (!Number.isFinite(existingTime) || incomingTime >= existingTime)) {
+          map.set(key, clone(item));
+        }
       }
       result[store] = [...map.values()];
     }
@@ -242,6 +264,7 @@
     const articleIds = ids('knowledgeArticles');
     const categoryIds = ids('knowledgeCategories');
     const entryIds = ids('entries');
+    const inspectionIds = ids('inspections');
     const validDate = value => !value || Number.isFinite(new Date(value).getTime());
     const add = (severity, code, message, store, id) => ({ severity, code, message, store, id });
 
@@ -261,6 +284,7 @@
     for (const item of array(data.tasks)) {
       if (item.eventId && !eventIds.has(item.eventId)) warnings.push(add('warning', 'orphan-event', `Задача ${item.id} ссылается на отсутствующее мероприятие.`, 'tasks', item.id));
       if (item.linkedEntryId && !entryIds.has(item.linkedEntryId)) warnings.push(add('warning', 'orphan-entry', `Задача ${item.id} ссылается на отсутствующую запись.`, 'tasks', item.id));
+      if (item.linkedInspectionId && !inspectionIds.has(item.linkedInspectionId)) warnings.push(add('warning', 'orphan-inspection', `Задача ${item.id} ссылается на отсутствующий осмотр.`, 'tasks', item.id));
     }
     for (const item of array(data.inspections)) if (item.eventId && !eventIds.has(item.eventId)) warnings.push(add('warning', 'orphan-event', `Осмотр ${item.id} ссылается на отсутствующее мероприятие.`, 'inspections', item.id));
     for (const item of array(data.knowledgeArticles)) {
@@ -271,6 +295,27 @@
     for (const category of array(data.knowledgeCategories)) {
       if (category.parentId && !categoryIds.has(category.parentId)) warnings.push(add('warning', 'orphan-parent', `Раздел ${category.id} ссылается на отсутствующий родительский раздел.`, 'knowledgeCategories', category.id));
       if (category.parentId === category.id) errors.push(add('error', 'category-cycle', `Раздел ${category.id} ссылается сам на себя.`, 'knowledgeCategories', category.id));
+    }
+    const categoryById = new Map(array(data.knowledgeCategories).map(item => [item.id, item]));
+    const reportedCycles = new Set();
+    for (const category of categoryById.values()) {
+      if (category.parentId === category.id) continue;
+      const path = [];
+      const positions = new Map();
+      let current = category;
+      while (current?.parentId && categoryById.has(current.parentId)) {
+        if (positions.has(current.id)) {
+          const cycle = path.slice(positions.get(current.id)).sort().join('|');
+          if (!reportedCycles.has(cycle)) {
+            reportedCycles.add(cycle);
+            errors.push(add('error', 'category-cycle', `Обнаружен цикл вложенности разделов: ${path.slice(positions.get(current.id)).join(' → ')}.`, 'knowledgeCategories', current.id));
+          }
+          break;
+        }
+        positions.set(current.id, path.length);
+        path.push(current.id);
+        current = categoryById.get(current.parentId);
+      }
     }
     for (const event of array(data.events)) {
       const gateIds = new Set();
@@ -312,6 +357,58 @@
       },
       counts: record(context.counts) ? context.counts : {},
     };
+  }
+
+  function relatedChangesForDelete(store, id, data = {}, updatedAt = new Date().toISOString()) {
+    const changes = [];
+    const add = (relatedStore, before, patch) => changes.push({
+      store: relatedStore,
+      before: clone(before),
+      after: { ...clone(before), ...patch, updatedAt },
+    });
+    if (store === 'entries') {
+      array(data.tasks).filter(item => item.linkedEntryId === id).forEach(item => add('tasks', item, { linkedEntryId: null }));
+    } else if (store === 'inspections') {
+      array(data.tasks).filter(item => item.linkedInspectionId === id).forEach(item => add('tasks', item, { linkedInspectionId: null }));
+    } else if (store === 'events') {
+      array(data.entries).filter(item => item.eventId === id).forEach(item => add('entries', item, { eventId: null }));
+      array(data.tasks).filter(item => item.eventId === id).forEach(item => add('tasks', item, { eventId: null }));
+      array(data.inspections).filter(item => item.eventId === id).forEach(item => add('inspections', item, { eventId: null }));
+      array(data.knowledgeArticles).filter(item => array(item.linkedEventIds).includes(id)).forEach(item => {
+        add('knowledgeArticles', item, { linkedEventIds: array(item.linkedEventIds).filter(value => value !== id) });
+      });
+    } else if (store === 'equipment') {
+      array(data.knowledgeArticles).filter(item => array(item.linkedEquipmentIds).includes(id)).forEach(item => {
+        add('knowledgeArticles', item, { linkedEquipmentIds: array(item.linkedEquipmentIds).filter(value => value !== id) });
+      });
+    }
+    return changes;
+  }
+
+  function reverseRelatedChange(current, change, updatedAt = new Date().toISOString()) {
+    if (!current || !change?.before) return null;
+    if (!change.after) return clone(change.before);
+    const before = change.before;
+    const after = change.after;
+    const next = clone(current);
+    let changed = false;
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    keys.delete('updatedAt');
+    for (const key of keys) {
+      if (JSON.stringify(before[key]) === JSON.stringify(after[key])) continue;
+      if (Array.isArray(before[key]) && Array.isArray(after[key]) && Array.isArray(current[key])) {
+        const removed = before[key].filter(value => !after[key].includes(value));
+        const added = after[key].filter(value => !before[key].includes(value));
+        next[key] = current[key].filter(value => !added.includes(value));
+        removed.forEach(value => { if (!next[key].includes(value)) next[key].push(clone(value)); });
+        changed = JSON.stringify(next[key]) !== JSON.stringify(current[key]) || changed;
+      } else if (JSON.stringify(current[key]) === JSON.stringify(after[key])) {
+        next[key] = clone(before[key]);
+        changed = true;
+      }
+    }
+    if (changed) next.updatedAt = updatedAt;
+    return next;
   }
 
   function crc32(bytes) {
@@ -403,19 +500,20 @@
   }
 
   function dataUrlToBytes(value) {
-    const match = /^data:([^;,]+);base64,(.+)$/s.exec(String(value || ''));
-    if (!match) throw new Error('Некорректное вложение в резервной копии.');
-    const binary = typeof atob === 'function' ? atob(match[2]) : Buffer.from(match[2], 'base64').toString('binary');
+    const parsed = parseImageDataUrl(value);
+    const binary = typeof atob === 'function' ? atob(parsed.base64) : Buffer.from(parsed.base64, 'base64').toString('binary');
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return { mime: match[1], bytes };
+    return { mime: parsed.mime, bytes };
   }
   function bytesToDataUrl(mime, bytes) {
+    const safeMime = text(mime).toLowerCase();
+    if (!SAFE_IMAGE_MIMES.has(safeMime)) throw new Error('Архив содержит неподдерживаемый тип изображения.');
     let binary = '';
     const chunk = 0x8000;
     for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
     const base64 = typeof btoa === 'function' ? btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
-    return `data:${mime};base64,${base64}`;
+    return `data:${safeMime};base64,${base64}`;
   }
 
   function buildBackupArchive(data, meta = {}) {
@@ -428,7 +526,7 @@
           if (typeof photo !== 'string' || !photo.startsWith('data:')) return null;
           const decoded = dataUrlToBytes(photo);
           const extension = decoded.mime === 'image/png' ? 'png' : 'jpg';
-          const path = `attachments/${store}-${item.id}-${index}.${extension}`;
+          const path = `attachments/${store}-${files.length}-${index}.${extension}`;
           files.push({ name: path, data: decoded.bytes });
           return { attachment: path, mime: decoded.mime, size: decoded.bytes.length };
         }).filter(Boolean);
@@ -453,17 +551,24 @@
     const files = parseZip(bytes);
     const decoder = new TextDecoder();
     if (!files.has('manifest.json') || !files.has('data.json')) throw new Error('Архив не содержит manifest.json или data.json.');
-    const manifest = JSON.parse(decoder.decode(files.get('manifest.json')));
+    let manifest;
+    let payload;
+    try { manifest = JSON.parse(decoder.decode(files.get('manifest.json'))); }
+    catch (_) { throw new Error('Архив повреждён: manifest.json содержит некорректный JSON.'); }
     if (manifest.app !== APP_NAME || Number(manifest.backupFormat) !== BACKUP_FORMAT) throw new Error('Формат архива не поддерживается.');
     const actualAttachmentCount = [...files.keys()].filter(name => name.startsWith('attachments/')).length;
     if (Number(manifest.attachmentCount || 0) !== actualAttachmentCount) throw new Error('Архив повреждён: количество вложений не совпадает с манифестом.');
-    const payload = JSON.parse(decoder.decode(files.get('data.json')));
+    try { payload = JSON.parse(decoder.decode(files.get('data.json'))); }
+    catch (_) { throw new Error('Архив повреждён: data.json содержит некорректный JSON.'); }
     for (const store of ['entries', 'inspections']) {
       for (const item of array(payload.data?.[store])) {
         item.photos = array(item.photos).map(photo => {
           if (typeof photo === 'string') return photo;
           if (!record(photo) || !photo.attachment || !files.has(photo.attachment)) throw new Error(`В архиве отсутствует вложение ${photo?.attachment || ''}.`);
-          return bytesToDataUrl(photo.mime || 'image/jpeg', files.get(photo.attachment));
+          if (!/^attachments\/[a-z0-9._-]+$/i.test(String(photo.attachment))) throw new Error('Архив содержит некорректный путь вложения.');
+          const attachment = files.get(photo.attachment);
+          if (Number(photo.size) !== attachment.length) throw new Error(`Архив повреждён: размер вложения ${photo.attachment} не совпадает.`);
+          return bytesToDataUrl(photo.mime || 'image/jpeg', attachment);
         });
       }
     }
@@ -471,9 +576,9 @@
   }
 
   return {
-    APP_NAME, CURRENT_SCHEMA, DATA_STORES, BACKUP_FORMAT,
+    APP_NAME, CURRENT_SCHEMA, DATA_STORES, BACKUP_FORMAT, SAFE_IMAGE_MIMES,
     normalizeRecord, migratePayload, validatePayload, countStores, previewImport, mergeData,
-    checkIntegrity, sanitizeDiagnostic, crc32, createZip, parseZip,
-    buildBackupArchive, readBackupArchive, dataUrlToBytes, bytesToDataUrl,
+    checkIntegrity, sanitizeDiagnostic, relatedChangesForDelete, reverseRelatedChange, crc32, createZip, parseZip,
+    buildBackupArchive, readBackupArchive, dataUrlToBytes, bytesToDataUrl, isSafeImageDataUrl,
   };
 });

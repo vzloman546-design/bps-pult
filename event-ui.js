@@ -21,6 +21,27 @@ const CHECK_STATUS_LABELS = {
   na: 'Не используется',
 };
 
+function captureEventFocus(root) {
+  const active = root.contains(document.activeElement) ? document.activeElement : null;
+  if (!active) return null;
+  return {
+    id: active.id || null,
+    attributes: [...active.attributes]
+      .filter(attribute => attribute.name.startsWith('data-'))
+      .map(attribute => ({ name:attribute.name, value:attribute.value })),
+  };
+}
+
+function restoreEventFocus(root, marker) {
+  if (!marker) return;
+  let replacement = marker.id ? root.querySelector(`#${marker.id}`) : null;
+  if (!replacement && marker.attributes.length) {
+    replacement = [...root.querySelectorAll(`[${marker.attributes[0].name}]`)]
+      .find(element => marker.attributes.every(attribute => element.getAttribute(attribute.name) === attribute.value));
+  }
+  replacement?.focus({ preventScroll:true });
+}
+
 function eventSelectField(selected = '') {
   if (!state.data.events.length) return '';
   const options = state.data.events.map(event => `<option value="${esc(event.id)}" ${event.id === selected ? 'selected' : ''}>${esc(event.name || 'Без названия')} · ${formatDate(event.date, { day:'numeric', month:'short' })}</option>`).join('');
@@ -137,9 +158,10 @@ function openEventEditor(initialDraft, isExisting) {
     return `${status} · ${active} рабочих${reserve ? ` · ${reserve} резерв` : ''}${faulty ? ` · ${faulty} неиспр.` : ''}`;
   };
 
-  const assignmentRows = desk => (desk.assignments || []).map((assignment, index) => `<div class="assignment-row" data-assignment-row="${index}"><input data-assignment-person="${index}" value="${esc(assignment.person)}" placeholder="ФИО кассира"><input type="time" data-assignment-from="${index}" value="${esc(assignment.from)}" aria-label="Начало смены"><input type="time" data-assignment-to="${index}" value="${esc(assignment.to)}" aria-label="Конец смены"><button type="button" class="icon-button compact danger-ghost" data-remove-assignment="${index}" aria-label="Удалить назначение">${icon('close')}</button></div>`).join('');
+  const assignmentRows = desk => (desk.assignments || []).map((assignment, index) => `<div class="assignment-row" data-assignment-row="${index}"><input data-assignment-person="${index}" value="${esc(assignment.person)}" placeholder="ФИО кассира" aria-label="Кассир, смена ${index + 1}"><input type="time" data-assignment-from="${index}" value="${esc(assignment.from)}" aria-label="Начало смены ${index + 1}"><input type="time" data-assignment-to="${index}" value="${esc(assignment.to)}" aria-label="Конец смены ${index + 1}"><button type="button" class="icon-button compact danger-ghost" data-remove-assignment="${index}" aria-label="Удалить смену ${index + 1}">${icon('close')}</button></div>`).join('');
 
   const renderEditor = () => {
+    const focusMarker = captureEventFocus(node);
     const checklistPreview = BpsEventLogic.generateChecklist(draft, draft.checklist);
     const summary = BpsEventLogic.summarizeConfiguration(draft);
     body.innerHTML = `<form id="eventForm" class="event-form">
@@ -154,7 +176,7 @@ function openEventEditor(initialDraft, isExisting) {
       <section class="form-section"><div class="form-section-head"><div><h3>Системы</h3><p>Включите только то, что используется на этом мероприятии</p></div></div>
         <div class="settings-list compact-settings">
           ${systemToggleRow('БПС','Сервер, контроллеры и билетная база','bps',draft.systems.bps)}
-          <div class="settings-row"><span class="settings-copy"><strong>СИБ</strong><small>Режим использования системы</small></span><select class="inline-select" data-system-select="sib">${BpsEventLogic.SIB_MODES.map(item => `<option value="${item.value}" ${draft.systems.sib===item.value?'selected':''}>${item.label}</option>`).join('')}</select></div>
+          <div class="settings-row"><span class="settings-copy"><strong>СИБ</strong><small>Режим использования системы</small></span><select class="inline-select" data-system-select="sib" aria-label="Режим использования СИБ">${BpsEventLogic.SIB_MODES.map(item => `<option value="${item.value}" ${draft.systems.sib===item.value?'selected':''}>${item.label}</option>`).join('')}</select></div>
           ${systemToggleRow('Онлайн-продажи','Доступ к билетному агрегатору','onlineSales',draft.systems.onlineSales)}
           ${systemToggleRow('Продажи в кассах','Проверки кассовых рабочих мест','offlineSales',draft.systems.offlineSales)}
           ${systemToggleRow('Печать билетов','Принтеры и тестовая печать','printing',draft.systems.printing)}
@@ -165,19 +187,19 @@ function openEventEditor(initialDraft, isExisting) {
 
       <section class="form-section"><div class="form-section-head"><div><h3>Гейты и турникеты</h3><p>${summary.activeGates} гейт. · ${summary.activeTurnstiles} рабочих · ${summary.reserveTurnstiles} резервных</p></div></div>
         <div class="config-stack">${draft.gates.map(gate => `<div class="config-card ${expandedGateId===gate.id?'expanded':''}">
-          <button type="button" class="config-card-head" data-toggle-gate="${gate.id}"><span class="row-icon ${gate.status==='unavailable'?'danger':gate.status==='active'||gate.status==='partial'?'success':''}">${icon('inspection')}</span><span><strong>${esc(gate.name)}</strong><small>${esc(gateSummary(gate))}</small></span>${icon(expandedGateId===gate.id?'close':'chevron')}</button>
+          <button type="button" class="config-card-head" data-toggle-gate="${esc(gate.id)}" aria-expanded="${expandedGateId===gate.id}"><span class="row-icon ${gate.status==='unavailable'?'danger':gate.status==='active'||gate.status==='partial'?'success':''}">${icon('inspection')}</span><span><strong>${esc(gate.name)}</strong><small>${esc(gateSummary(gate))}</small></span>${icon(expandedGateId===gate.id?'close':'chevron')}</button>
           ${expandedGateId===gate.id ? `<div class="config-card-body">
-            <div class="field"><label>Режим гейта</label><select data-gate-status="${gate.id}">${BpsEventLogic.GATE_STATUSES.map(item => `<option value="${item.value}" ${gate.status===item.value?'selected':''}>${item.label}</option>`).join('')}</select></div>
-            <div class="quick-preset-row"><button type="button" class="chip" data-gate-preset="all" data-gate-id="${gate.id}">Все рабочие</button><button type="button" class="chip" data-gate-preset="first4" data-gate-id="${gate.id}">Первые 4</button><button type="button" class="chip" data-gate-preset="reset" data-gate-id="${gate.id}">Сбросить</button></div>
-            <div class="turnstile-list">${gate.turnstiles.map(turnstile => `<div class="turnstile-row"><span><strong>${esc(turnstile.name)}</strong><small>${esc(BpsEventLogic.TURNSTILE_MODES.find(item=>item.value===turnstile.mode)?.label||turnstile.mode)}</small></span><select data-turnstile-mode="${turnstile.id}" data-gate-id="${gate.id}">${BpsEventLogic.TURNSTILE_MODES.map(item => `<option value="${item.value}" ${turnstile.mode===item.value?'selected':''}>${item.label}</option>`).join('')}</select></div>`).join('')}</div>
+            <div class="field"><label>Режим гейта</label><select data-gate-status="${esc(gate.id)}" aria-label="Режим гейта ${esc(gate.name)}">${BpsEventLogic.GATE_STATUSES.map(item => `<option value="${item.value}" ${gate.status===item.value?'selected':''}>${item.label}</option>`).join('')}</select></div>
+            <div class="quick-preset-row"><button type="button" class="chip" data-gate-preset="all" data-gate-id="${esc(gate.id)}">Все рабочие</button><button type="button" class="chip" data-gate-preset="first4" data-gate-id="${esc(gate.id)}">Первые 4</button><button type="button" class="chip" data-gate-preset="reset" data-gate-id="${esc(gate.id)}">Сбросить</button></div>
+            <div class="turnstile-list">${gate.turnstiles.map(turnstile => `<div class="turnstile-row"><span><strong>${esc(turnstile.name)}</strong><small>${esc(BpsEventLogic.TURNSTILE_MODES.find(item=>item.value===turnstile.mode)?.label||turnstile.mode)}</small></span><select data-turnstile-mode="${esc(turnstile.id)}" data-gate-id="${esc(gate.id)}" aria-label="Режим ${esc(gate.name)}, ${esc(turnstile.name)}">${BpsEventLogic.TURNSTILE_MODES.map(item => `<option value="${item.value}" ${turnstile.mode===item.value?'selected':''}>${item.label}</option>`).join('')}</select></div>`).join('')}</div>
           </div>` : ''}
         </div>`).join('')}</div>
       </section>
 
       <section class="form-section"><div class="form-section-head"><div><h3>Кассы и кассиры</h3><p>${summary.activeCashDesks} активных касс · ${summary.assignments} назначений</p></div></div>
         <div class="config-stack">${draft.cashDesks.map(desk => `<div class="config-card ${expandedCashId===desk.id?'expanded':''}">
-          <button type="button" class="config-card-head" data-toggle-cash="${desk.id}"><span class="row-icon ${desk.mode==='active'?'success':desk.mode==='reserve'?'info':''}">${icon('ticket')}</span><span><strong>${esc(desk.name)}</strong><small>${desk.mode==='active'?'Работает':desk.mode==='reserve'?'Резерв':'Не используется'}${desk.assignments.length?` · ${desk.assignments.length} назнач.`:''}</small></span>${icon(expandedCashId===desk.id?'close':'chevron')}</button>
-          ${expandedCashId===desk.id ? `<div class="config-card-body"><div class="field"><label>Режим кассы</label><select data-cash-mode="${desk.id}"><option value="active" ${desk.mode==='active'?'selected':''}>Работает</option><option value="reserve" ${desk.mode==='reserve'?'selected':''}>Резерв</option><option value="closed" ${desk.mode==='closed'?'selected':''}>Не используется</option></select></div><div class="assignment-list">${assignmentRows(desk)}</div><button type="button" class="button small full" data-add-assignment="${desk.id}">${icon('plus')}Добавить кассира или смену</button></div>` : ''}
+          <button type="button" class="config-card-head" data-toggle-cash="${esc(desk.id)}" aria-expanded="${expandedCashId===desk.id}"><span class="row-icon ${desk.mode==='active'?'success':desk.mode==='reserve'?'info':''}">${icon('ticket')}</span><span><strong>${esc(desk.name)}</strong><small>${desk.mode==='active'?'Работает':desk.mode==='reserve'?'Резерв':'Не используется'}${desk.assignments.length?` · ${desk.assignments.length} назнач.`:''}</small></span>${icon(expandedCashId===desk.id?'close':'chevron')}</button>
+          ${expandedCashId===desk.id ? `<div class="config-card-body"><div class="field"><label>Режим кассы</label><select data-cash-mode="${esc(desk.id)}" aria-label="Режим ${esc(desk.name)}"><option value="active" ${desk.mode==='active'?'selected':''}>Работает</option><option value="reserve" ${desk.mode==='reserve'?'selected':''}>Резерв</option><option value="closed" ${desk.mode==='closed'?'selected':''}>Не используется</option></select></div><div class="assignment-list">${assignmentRows(desk)}</div><button type="button" class="button small full" data-add-assignment="${esc(desk.id)}">${icon('plus')}Добавить кассира или смену</button></div>` : ''}
         </div>`).join('')}</div>
       </section>
 
@@ -185,10 +207,11 @@ function openEventEditor(initialDraft, isExisting) {
       ${isExisting ? `<button type="button" class="button danger full" data-delete-event="${esc(draft.id)}">${icon('trash')}Удалить мероприятие</button>` : ''}
     </form>`;
     bindEditorEvents();
+    restoreEventFocus(node, focusMarker);
   };
 
   function systemToggleRow(title, subtitle, key, enabled) {
-    return `<div class="settings-row"><span class="settings-copy"><strong>${esc(title)}</strong><small>${esc(subtitle)}</small></span><button type="button" class="switch ${enabled?'on':''}" data-system-toggle="${key}" role="switch" aria-checked="${enabled}"></button></div>`;
+    return `<div class="settings-row"><span class="settings-copy"><strong>${esc(title)}</strong><small>${esc(subtitle)}</small></span><button type="button" class="switch ${enabled?'on':''}" data-system-toggle="${esc(key)}" role="switch" aria-checked="${enabled}" aria-label="${esc(title)}"></button></div>`;
   }
 
   function bindEditorEvents() {
@@ -228,9 +251,12 @@ function openEventEditor(initialDraft, isExisting) {
     const desk = draft.cashDesks.find(item => item.id === expandedCashId);
     if (!desk) return;
     desk.assignments.forEach((assignment, index) => {
-      assignment.person = node.querySelector(`[data-assignment-person="${index}"]`)?.value || assignment.person;
-      assignment.from = node.querySelector(`[data-assignment-from="${index}"]`)?.value || assignment.from;
-      assignment.to = node.querySelector(`[data-assignment-to="${index}"]`)?.value || assignment.to;
+      const person = node.querySelector(`[data-assignment-person="${index}"]`);
+      const from = node.querySelector(`[data-assignment-from="${index}"]`);
+      const to = node.querySelector(`[data-assignment-to="${index}"]`);
+      if (person) assignment.person = person.value;
+      if (from) assignment.from = from.value;
+      if (to) assignment.to = to.value;
     });
   }
 
@@ -260,7 +286,7 @@ function openEventEditor(initialDraft, isExisting) {
 }
 
 function checklistStatusButton(item, status) {
-  return `<button type="button" class="check-status-button ${item.status===status?`active ${status}`:''}" data-check-key="${esc(item.key)}" data-check-status="${status}" aria-label="${CHECK_STATUS_LABELS[status]}">${status==='ok'?icon('check'):status==='issue'?icon('alert'):status==='failed'?icon('close'):status==='na'?icon('more'):icon('clock')}</button>`;
+  return `<button type="button" class="check-status-button ${item.status===status?`active ${status}`:''}" data-check-key="${esc(item.key)}" data-check-status="${status}" aria-label="${esc(CHECK_STATUS_LABELS[status])} — ${esc(item.title)}">${status==='ok'?icon('check'):status==='issue'?icon('alert'):status==='failed'?icon('close'):status==='na'?icon('more'):icon('clock')}</button>`;
 }
 
 function openEventDetail(id) {
@@ -270,6 +296,7 @@ function openEventDetail(id) {
   const body = node.querySelector('.modal-body');
 
   const renderDetail = () => {
+    const focusMarker = captureEventFocus(node);
     const readiness = BpsEventLogic.calculateReadiness(event);
     const summary = BpsEventLogic.summarizeConfiguration(event);
     const linkedEntries = state.data.entries.filter(item => item.eventId === event.id);
@@ -288,6 +315,7 @@ function openEventDetail(id) {
     ${window.knowledgeLinkedArticlesHtml?.(null,event.id)||''}
     <section class="modal-section"><div class="button-row"><button class="button" id="duplicateEvent">${icon('copy')}Копировать</button><button class="button" id="advanceEventStatus">${icon('clock')}${event.status==='planned'?'Начать подготовку':event.status==='preparing'?'Открыть режим проведения':event.status==='live'?'Завершить':'Вернуть в план'}</button></div></section>`;
     bindDetail();
+    restoreEventFocus(node, focusMarker);
   };
 
   const bindDetail = () => {

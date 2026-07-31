@@ -1,4 +1,5 @@
-const VERSION = '2.0.0';
+// Релиз 2.1.0: активная версия обслуживает только собственный проверенный кэш оболочки.
+const VERSION = '2.1.0';
 const CACHE = `bps-pult-${VERSION}`;
 const APP_SHELL = [
   './', './index.html', './styles.css', './stability-logic.js', './event-logic.js', './knowledge-logic.js',
@@ -29,23 +30,24 @@ self.addEventListener('fetch', event => {
 
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request)
-        .then(response => {
-          if (response.ok) caches.open(CACHE).then(cache => cache.put('./index.html', response.clone()));
-          return response;
-        })
-        .catch(() => caches.match('./index.html'))
+      caches.open(CACHE).then(async cache => {
+        const cached = await cache.match('./index.html');
+        if (cached) return cached;
+        const response = await fetch(event.request);
+        if (response.ok) await cache.put('./index.html', response.clone());
+        return response;
+      })
     );
     return;
   }
 
   event.respondWith(
-    caches.match(event.request).then(cached => {
-      const network = fetch(event.request).then(response => {
-        if (response.ok) caches.open(CACHE).then(cache => cache.put(event.request, response.clone()));
-        return response;
-      });
-      return cached || network.catch(() => caches.match('./index.html'));
+    caches.open(CACHE).then(async cache => {
+      const cached = await cache.match(event.request, { ignoreSearch: true });
+      if (cached) return cached;
+      const response = await fetch(event.request);
+      if (response.ok) await cache.put(event.request, response.clone());
+      return response;
     })
   );
 });

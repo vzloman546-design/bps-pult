@@ -1,6 +1,9 @@
 {
-  "linkCleared": true,
-  "noOrphanAfterDelete": true,
-  "linkRestoredOnUndo": true,
-  "eventRestoredOnUndo": true
+  "version": "2.1.0",
+  "inspectionTaskLinkPreservedOnSave": true,
+  "linkClearedAtomicallyOnDelete": true,
+  "integrityErrorsAfterDelete": 0,
+  "integrityWarningsAfterDelete": 0,
+  "undoReversesOnlyOwnedFields": true,
+  "concurrentUnrelatedChangesPreservedByUnitTest": true
 }

@@ -1,214 +1,35 @@
 {
-  "version": "2.0.0",
+  "version": "2.1.0",
   "schemaVersion": 4,
+  "cache": "bps-pult-2.1.0",
   "logicTests": {
     "events": 9,
-    "knowledge": 10,
-    "stabilityGroups": 8,
-    "serviceWorker": 1
+    "knowledge": 14,
+    "stabilityGroups": 15,
+    "appContracts": 10,
+    "serviceWorker": "passed"
   },
-  "ui": {
-    "viewports": {
-      "320": {
-        "scrollWidth": 320,
-        "innerWidth": 320,
-        "navPosition": "fixed",
-        "navBottom": 0,
-        "navBottomAfterScroll": 0
-      },
-      "375": {
-        "scrollWidth": 375,
-        "innerWidth": 375,
-        "navPosition": "fixed",
-        "navBottom": 0,
-        "navBottomAfterScroll": 0
-      },
-      "390": {
-        "scrollWidth": 390,
-        "innerWidth": 390,
-        "navPosition": "fixed",
-        "navBottom": 0,
-        "navBottomAfterScroll": 0
-      },
-      "430": {
-        "scrollWidth": 430,
-        "innerWidth": 430,
-        "navPosition": "fixed",
-        "navBottom": 0,
-        "navBottomAfterScroll": 0
-      }
+  "syntaxChecks": [
+    "app.js",
+    "stability-logic.js",
+    "event-logic.js",
+    "event-ui.js",
+    "knowledge-logic.js",
+    "knowledge-ui.js",
+    "sw.js"
+  ],
+  "browserChecks": {
+    "controlledUpdate": true,
+    "offlineWithServerStopped": true,
+    "legacySchema3PreviewAndMerge": true,
+    "integrityAfterRelatedDelete": {
+      "errors": 0,
+      "warnings": 0
     },
-    "consoleErrors": [],
-    "pageErrors": [],
-    "checks": {
-      "modal": {
-        "appInert": true,
-        "navInert": true,
-        "activeInside": true,
-        "role": "dialog",
-        "closed": true
-      },
-      "atomicRollback": {
-        "failed": true,
-        "preserved": true
-      },
-      "undo": {
-        "gone": true,
-        "restored": true,
-        "exists": true
-      }
-    }
+    "contextSearchByEquipment": true,
+    "contextSearchByEvent": true,
+    "modalTransitionPreserved": true,
+    "focusPreservedAfterRerender": true
   },
-  "fullAudit": {
-    "routes": {
-      "today": {
-        "scrollWidth": 390,
-        "innerWidth": 390,
-        "smallTargets": [],
-        "mainLeft": 0,
-        "navBottom": 0
-      },
-      "journal": {
-        "scrollWidth": 390,
-        "innerWidth": 390,
-        "smallTargets": [],
-        "mainLeft": 0,
-        "navBottom": 0
-      },
-      "inspections": {
-        "scrollWidth": 390,
-        "innerWidth": 390,
-        "smallTargets": [],
-        "mainLeft": 0,
-        "navBottom": 0
-      },
-      "more": {
-        "scrollWidth": 390,
-        "innerWidth": 390,
-        "smallTargets": [],
-        "mainLeft": 0,
-        "navBottom": 0
-      },
-      "tasks": {
-        "scrollWidth": 390,
-        "innerWidth": 390,
-        "smallTargets": [],
-        "mainLeft": 0,
-        "navBottom": 0
-      },
-      "events": {
-        "scrollWidth": 390,
-        "innerWidth": 390,
-        "smallTargets": [],
-        "mainLeft": 0,
-        "navBottom": 0
-      },
-      "knowledge": {
-        "scrollWidth": 390,
-        "innerWidth": 390,
-        "smallTargets": [],
-        "mainLeft": 0,
-        "navBottom": 0
-      },
-      "equipment": {
-        "scrollWidth": 390,
-        "innerWidth": 390,
-        "smallTargets": [],
-        "mainLeft": 0,
-        "navBottom": 0
-      },
-      "report": {
-        "scrollWidth": 390,
-        "innerWidth": 390,
-        "smallTargets": [],
-        "mainLeft": 0,
-        "navBottom": 0
-      },
-      "settings": {
-        "scrollWidth": 390,
-        "innerWidth": 390,
-        "smallTargets": [],
-        "mainLeft": 0,
-        "navBottom": 0
-      },
-      "install": {
-        "scrollWidth": 390,
-        "innerWidth": 390,
-        "smallTargets": [],
-        "mainLeft": 0,
-        "navBottom": 0
-      }
-    },
-    "forms": {
-      "entry": {
-        "sheetLeft": 0,
-        "sheetRight": 390,
-        "innerWidth": 390,
-        "bodyScrollWidth": 388,
-        "bodyClientWidth": 388,
-        "activeInside": true
-      },
-      "task": {
-        "sheetLeft": 0,
-        "sheetRight": 390,
-        "innerWidth": 390,
-        "bodyScrollWidth": 388,
-        "bodyClientWidth": 388,
-        "activeInside": true
-      },
-      "inspection": {
-        "sheetLeft": 0,
-        "sheetRight": 390,
-        "innerWidth": 390,
-        "bodyScrollWidth": 388,
-        "bodyClientWidth": 388,
-        "activeInside": true
-      },
-      "equipment": {
-        "sheetLeft": 0,
-        "sheetRight": 390,
-        "innerWidth": 390,
-        "bodyScrollWidth": 388,
-        "bodyClientWidth": 388,
-        "activeInside": true
-      },
-      "event": {
-        "sheetLeft": 0,
-        "sheetRight": 390,
-        "innerWidth": 390,
-        "bodyScrollWidth": 388,
-        "bodyClientWidth": 388,
-        "activeInside": true
-      },
-      "knowledge": {
-        "sheetLeft": 0,
-        "sheetRight": 390,
-        "innerWidth": 390,
-        "bodyScrollWidth": 388,
-        "bodyClientWidth": 388,
-        "activeInside": true
-      }
-    },
-    "errors": []
-  },
-  "importIntegration": {
-    "replaceIds": [
-      "imported"
-    ],
-    "merge": {},
-    "corruptRejected": true,
-    "afterCorruptCount": 3,
-    "mergeRows": {
-      "imported": "from backup",
-      "newer": "local newer",
-      "second": "second"
-    }
-  },
-  "relatedUndo": {
-    "linkCleared": true,
-    "noOrphanAfterDelete": true,
-    "linkRestoredOnUndo": true,
-    "eventRestoredOnUndo": true
-  },
-  "generatedAt": "2026-07-31T08:30:00Z"
+  "generatedAt": "2026-07-31T12:25:29+03:00"
 }

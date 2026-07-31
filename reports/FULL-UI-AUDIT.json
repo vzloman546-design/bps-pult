@@ -1,132 +1,56 @@
 {
-  "routes": {
-    "today": {
-      "scrollWidth": 390,
-      "innerWidth": 390,
-      "smallTargets": [],
-      "mainLeft": 0,
-      "navBottom": 0
-    },
-    "journal": {
-      "scrollWidth": 390,
-      "innerWidth": 390,
-      "smallTargets": [],
-      "mainLeft": 0,
-      "navBottom": 0
-    },
-    "inspections": {
-      "scrollWidth": 390,
-      "innerWidth": 390,
-      "smallTargets": [],
-      "mainLeft": 0,
-      "navBottom": 0
-    },
-    "more": {
-      "scrollWidth": 390,
-      "innerWidth": 390,
-      "smallTargets": [],
-      "mainLeft": 0,
-      "navBottom": 0
-    },
-    "tasks": {
-      "scrollWidth": 390,
-      "innerWidth": 390,
-      "smallTargets": [],
-      "mainLeft": 0,
-      "navBottom": 0
-    },
-    "events": {
-      "scrollWidth": 390,
-      "innerWidth": 390,
-      "smallTargets": [],
-      "mainLeft": 0,
-      "navBottom": 0
-    },
-    "knowledge": {
-      "scrollWidth": 390,
-      "innerWidth": 390,
-      "smallTargets": [],
-      "mainLeft": 0,
-      "navBottom": 0
-    },
-    "equipment": {
-      "scrollWidth": 390,
-      "innerWidth": 390,
-      "smallTargets": [],
-      "mainLeft": 0,
-      "navBottom": 0
-    },
-    "report": {
-      "scrollWidth": 390,
-      "innerWidth": 390,
-      "smallTargets": [],
-      "mainLeft": 0,
-      "navBottom": 0
-    },
-    "settings": {
-      "scrollWidth": 390,
-      "innerWidth": 390,
-      "smallTargets": [],
-      "mainLeft": 0,
-      "navBottom": 0
-    },
-    "install": {
-      "scrollWidth": 390,
-      "innerWidth": 390,
-      "smallTargets": [],
-      "mainLeft": 0,
-      "navBottom": 0
-    }
+  "version": "2.1.0",
+  "generatedAt": "2026-07-31T12:25:29+03:00",
+  "browser": "in-app Chromium",
+  "routeAudit": {
+    "routes": [
+      "today",
+      "journal",
+      "tasks",
+      "inspections",
+      "events",
+      "knowledge",
+      "equipment",
+      "more",
+      "report",
+      "settings",
+      "install"
+    ],
+    "viewports": [320, 375, 390, 430],
+    "themes": ["light", "dark"],
+    "runs": 88,
+    "contentOverflowFailures": 0,
+    "unnamedInteractiveElements": 0,
+    "effectiveTargetsBelow44": 0,
+    "bottomNavPosition": "fixed",
+    "bottomNavBottom": 0
   },
   "forms": {
-    "entry": {
-      "sheetLeft": 0,
-      "sheetRight": 390,
-      "innerWidth": 390,
-      "bodyScrollWidth": 388,
-      "bodyClientWidth": 388,
-      "activeInside": true
-    },
-    "task": {
-      "sheetLeft": 0,
-      "sheetRight": 390,
-      "innerWidth": 390,
-      "bodyScrollWidth": 388,
-      "bodyClientWidth": 388,
-      "activeInside": true
-    },
-    "inspection": {
-      "sheetLeft": 0,
-      "sheetRight": 390,
-      "innerWidth": 390,
-      "bodyScrollWidth": 388,
-      "bodyClientWidth": 388,
-      "activeInside": true
-    },
-    "equipment": {
-      "sheetLeft": 0,
-      "sheetRight": 390,
-      "innerWidth": 390,
-      "bodyScrollWidth": 388,
-      "bodyClientWidth": 388,
-      "activeInside": true
-    },
-    "event": {
-      "sheetLeft": 0,
-      "sheetRight": 390,
-      "innerWidth": 390,
-      "bodyScrollWidth": 388,
-      "bodyClientWidth": 388,
-      "activeInside": true
-    },
-    "knowledge": {
-      "sheetLeft": 0,
-      "sheetRight": 390,
-      "innerWidth": 390,
-      "bodyScrollWidth": 388,
-      "bodyClientWidth": 388,
-      "activeInside": true
-    }
+    "entry320": "passed",
+    "task320": "passed",
+    "inspection320": "passed",
+    "equipment320": "passed",
+    "eventAllViewportsBothThemes": "passed",
+    "knowledgeAllViewportsBothThemes": "passed",
+    "eventExpandedGateTurnstilesCashAssignment": "passed",
+    "eventChecklist32Items": "passed",
+    "sheetOverflowFailures": 0,
+    "focusInside": true,
+    "backgroundInert": true
+  },
+  "touchTargets": {
+    "switch": [52, 44],
+    "checklistStatusMinimumHeight": 44,
+    "assignmentDelete": [44, 44],
+    "photoDelete": [44, 44],
+    "knowledgeNativeCheckbox": [22, 22],
+    "knowledgeCheckboxLabelMinimumHeight": 64
+  },
+  "contrast": {
+    "lightPrimaryText": 4.66,
+    "lightTertiaryOnBackground": 4.92,
+    "darkPrimaryText": 7.03,
+    "darkTertiaryOnBackground": 5.11
   },
   "errors": []
 }

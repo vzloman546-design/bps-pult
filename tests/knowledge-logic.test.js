@@ -44,4 +44,24 @@ const restored = K.restoreVersion(changed,changed.versions[0].id,'2026-08-01T00:
 assert.equal(restored.title,'Версия 1','Восстановление должно вернуть старое содержимое');
 assert.equal(restored.versions.length,2,'Текущая версия должна сохраниться перед восстановлением');
 
-console.log('knowledge-logic: 10 сценариев пройдены');
+const linkedArticle = K.normalizeArticle({
+  id:'linked', title:'Сервисная памятка', categoryId:'root', type:'reference',
+  linkedEquipmentIds:['eq1'], linkedEventIds:['event1'], status:'current',
+});
+const context = {
+  equipment:[{id:'eq1',name:'Турникет северный',designation:'Т-17',ip:'192.168.10.17'}],
+  events:[{id:'event1',name:'Кубковый матч',type:'Матч'}],
+};
+assert.equal(K.filterArticles([linkedArticle],categories,{query:'т-17'},context).length,1,'Поиск должен учитывать обозначение связанного оборудования');
+assert.equal(K.filterArticles([linkedArticle],categories,{query:'кубковый'},context).length,1,'Поиск должен учитывать связанное мероприятие');
+
+const malformedLinks = K.normalizeArticle({ linkedEquipmentIds:'eq1', linkedEventIds:{id:'event1'} });
+assert.deepEqual(malformedLinks.linkedEquipmentIds,[]);
+assert.deepEqual(malformedLinks.linkedEventIds,[]);
+
+let capped = K.normalizeArticle({id:'capped',title:'До',categoryId:'root',type:'reference',versions:Array.from({length:20},(_,index)=>({id:`v${index}`,number:index+10,data:{}}))});
+capped = K.mergeForSave(capped,{...capped,title:'После'},'2026-08-02T00:00:00Z');
+assert.equal(capped.versions.length,20,'История должна оставаться ограниченной');
+assert.equal(capped.versions.at(-1).number,30,'Номер версии не должен повторяться после ограничения истории');
+
+console.log('knowledge-logic: 14 сценариев пройдены');
