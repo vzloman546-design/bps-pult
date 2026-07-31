@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const SCHEMA_VERSION = 1;
 const DB_NAME = 'bps-pult-local';
 const DB_VERSION = 1;
@@ -26,6 +26,9 @@ const state = {
   taskFilter: 'Открытые',
   data: { entries: [], tasks: [], inspections: [], equipment: [] },
 };
+
+const interactionState = { modalClosing: false, openSwipeRow: null };
+const prefersReducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const iconPaths = {
   home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10.5V21h13V10.5"/><path d="M9 21v-6h6v6"/>',
@@ -228,6 +231,7 @@ function updateNav() {
 }
 
 async function render() {
+  const previousRoute = state.route;
   state.route = currentRoute();
   await refreshData();
   document.getElementById('pageTitle').textContent = routeTitles[state.route];
@@ -237,21 +241,44 @@ async function render() {
     today: renderToday, journal: renderJournal, inspections: renderInspections, more: renderMore,
     tasks: renderTasks, equipment: renderEquipment, report: renderReport, settings: renderSettings, install: renderInstall
   };
-  main.innerHTML = await pages[state.route]();
-  main.scrollTop = 0;
-  window.scrollTo({ top: 0, behavior: 'instant' });
-  bindPageEvents();
+  const update = async () => {
+    main.classList.remove('page-ready');
+    main.innerHTML = await pages[state.route]();
+    main.dataset.route = state.route;
+    bindPageEvents();
+    requestAnimationFrame(() => main.classList.add('page-ready'));
+  };
+  if (document.startViewTransition && !prefersReducedMotion()) {
+    const transition = document.startViewTransition(update);
+    await transition.finished.catch(() => {});
+  } else {
+    await update();
+  }
+  if (previousRoute !== state.route) window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
 function emptyState(iconName, title, text, action = '') {
   return `<div class="empty-state"><div class="empty-state-icon">${icon(iconName)}</div><h3>${esc(title)}</h3><p>${esc(text)}</p>${action}</div>`;
 }
+function swipeActionsFor(action, id) {
+  const safeId = esc(id);
+  if (action === 'entry-detail') return `<button class="swipe-action edit" data-gesture-action="edit-entry" data-id="${safeId}">${icon('edit')}<span>Изменить</span></button><button class="swipe-action delete" data-gesture-action="delete-entry" data-id="${safeId}">${icon('trash')}<span>Удалить</span></button>`;
+  if (action === 'task-detail') return `<button class="swipe-action complete" data-gesture-action="toggle-task" data-id="${safeId}">${icon('check')}<span>Готово</span></button><button class="swipe-action edit" data-gesture-action="edit-task" data-id="${safeId}">${icon('edit')}<span>Изменить</span></button>`;
+  if (action === 'inspection-detail') return `<button class="swipe-action edit" data-gesture-action="edit-inspection" data-id="${safeId}">${icon('edit')}<span>Изменить</span></button><button class="swipe-action delete" data-gesture-action="delete-inspection" data-id="${safeId}">${icon('trash')}<span>Удалить</span></button>`;
+  if (action === 'equipment-detail') return `<button class="swipe-action edit" data-gesture-action="edit-equipment" data-id="${safeId}">${icon('edit')}<span>Изменить</span></button><button class="swipe-action delete" data-gesture-action="delete-equipment" data-id="${safeId}">${icon('trash')}<span>Удалить</span></button>`;
+  return '';
+}
+function swipeRow(content, action, id) {
+  const actions = swipeActionsFor(action, id);
+  return actions ? `<div class="swipe-row" data-swipe-row data-id="${esc(id)}"><div class="swipe-actions">${actions}</div>${content}</div>` : content;
+}
 function listRow({ id, action, iconName = 'journal', tone = '', title, meta, side = '', extra = '' }) {
-  return `<button class="list-row" data-action="${action}" data-id="${esc(id)}">
+  const content = `<button class="list-row swipe-content" data-action="${action}" data-id="${esc(id)}">
     <span class="row-icon ${tone}">${icon(iconName)}</span>
     <span class="list-row-main"><span class="list-row-title">${esc(title)}</span><span class="list-row-meta">${esc(meta)}</span>${extra}</span>
     ${side ? `<span class="list-row-side">${side}</span>` : ''}<span class="list-row-chevron">${icon('chevron')}</span>
   </button>`;
+  return swipeRow(content, action, id);
 }
 
 async function renderToday() {
@@ -355,13 +382,14 @@ function entryRow(entry) {
 
 function taskRow(task) {
   const due = task.dueAt ? (isToday(task.dueAt) ? `Сегодня, ${formatDate(task.dueAt,{hour:'2-digit',minute:'2-digit'})}` : formatDate(task.dueAt,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})) : 'Без срока';
-  return `<div class="list-row" data-action="task-detail" data-id="${esc(task.id)}">
+  const content = `<div class="list-row swipe-content" data-action="task-detail" data-id="${esc(task.id)}">
     <button class="task-check ${task.completed ? 'done' : ''}" data-action="toggle-task" data-id="${esc(task.id)}" aria-label="${task.completed?'Вернуть задачу':'Выполнить задачу'}">${task.completed ? icon('check') : ''}</button>
     <button class="list-row-main" data-action="task-detail" data-id="${esc(task.id)}" style="border:0;background:none;color:inherit;text-align:left;padding:0;min-width:0">
       <span class="list-row-title ${task.completed?'task-title-done':''}">${esc(task.title)}</span><span class="list-row-meta">${esc(task.object || 'Без объекта')} · ${esc(due)}</span>
     </button>
     <span class="list-row-side"><span class="status-pill ${isOverdue(task)?'danger':statusTone(task.priority)}">${isOverdue(task)?'Просрочено':esc(task.priority)}</span></span>
   </div>`;
+  return swipeRow(content, 'task-detail', task.id);
 }
 function renderTasks() {
   const filter = state.taskFilter;
@@ -478,6 +506,7 @@ function renderInstall() {
 }
 
 function openModal(title, bodyHtml, options = {}) {
+  if (document.querySelector('[data-modal-backdrop]')) closeModal({ immediate: true });
   const template = document.getElementById('modalTemplate');
   const node = template.content.firstElementChild.cloneNode(true);
   node.querySelector('#modalTitle').textContent = title;
@@ -485,13 +514,80 @@ function openModal(title, bodyHtml, options = {}) {
   node.querySelector('.modal-header-action').innerHTML = options.actionHtml || '';
   document.getElementById('modalRoot').replaceChildren(node);
   document.body.style.overflow = 'hidden';
-  node.querySelectorAll('[data-modal-close]').forEach(btn=>btn.addEventListener('click',closeModal));
+  document.body.classList.add('sheet-open');
+  interactionState.modalClosing = false;
+  node.querySelectorAll('[data-modal-close]').forEach(btn=>btn.addEventListener('click',()=>closeModal()));
   node.addEventListener('click', e=>{ if(e.target.matches('[data-modal-backdrop]')) closeModal(); });
+  setupSheetGestures(node);
   options.onOpen?.(node);
-  requestAnimationFrame(()=>node.querySelector('input,select,textarea,button')?.focus({preventScroll:true}));
+  requestAnimationFrame(()=>{
+    node.classList.add('visible');
+    node.querySelector('input,select,textarea,button')?.focus({preventScroll:true});
+  });
   return node;
 }
-function closeModal() { document.getElementById('modalRoot').innerHTML=''; document.body.style.overflow=''; }
+function closeModal(options = {}) {
+  const node = document.querySelector('[data-modal-backdrop]');
+  if (!node || interactionState.modalClosing) return;
+  interactionState.modalClosing = true;
+  const finish = () => {
+    document.getElementById('modalRoot').innerHTML='';
+    document.body.style.overflow='';
+    document.body.classList.remove('sheet-open');
+    interactionState.modalClosing = false;
+  };
+  if (options.immediate || prefersReducedMotion()) return finish();
+  node.classList.add('closing');
+  node.querySelector('[data-sheet]')?.classList.add('closing');
+  setTimeout(finish, 230);
+}
+function setupSheetGestures(node) {
+  const sheet = node.querySelector('[data-sheet]');
+  if (!sheet) return;
+  let startX=0, startY=0, lastY=0, lastTime=0, pointerId=null, dragging=false;
+  const reset = () => {
+    sheet.classList.remove('dragging');
+    sheet.style.removeProperty('--sheet-y');
+    node.style.removeProperty('--backdrop-opacity');
+    document.querySelector('.app-shell')?.style.removeProperty('--app-scale');
+    pointerId=null; dragging=false;
+  };
+  const down = event => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (!event.target.closest('[data-sheet-handle]')) return;
+    if (event.target.closest('button,input,textarea,select,a,label')) return;
+    startX=event.clientX; startY=event.clientY; lastY=startY; lastTime=performance.now(); pointerId=event.pointerId;
+    sheet.setPointerCapture?.(pointerId);
+  };
+  const move = event => {
+    if (event.pointerId !== pointerId) return;
+    const dx=event.clientX-startX, dy=event.clientY-startY;
+    if (Math.abs(dx) > Math.abs(dy) || dy <= 0) return;
+    event.preventDefault(); dragging=true; sheet.classList.add('dragging');
+    const y = dy < 260 ? dy : 260 + (dy-260)*.35;
+    const progress=Math.min(1,y/Math.max(240,sheet.offsetHeight*.42));
+    sheet.style.setProperty('--sheet-y',`${y}px`);
+    node.style.setProperty('--backdrop-opacity',String(.48*(1-progress*.88)));
+    document.querySelector('.app-shell')?.style.setProperty('--app-scale',String(.985+progress*.015));
+    lastY=event.clientY; lastTime=performance.now();
+  };
+  const up = event => {
+    if (event.pointerId !== pointerId) return;
+    const dy=Math.max(0,event.clientY-startY);
+    const elapsed=Math.max(16,performance.now()-lastTime);
+    const velocity=Math.max(0,(event.clientY-lastY)/elapsed);
+    sheet.releasePointerCapture?.(pointerId);
+    if (dragging && (dy>Math.min(150,sheet.offsetHeight*.23) || velocity>.72)) {
+      sheet.style.setProperty('--sheet-y',`${innerHeight+60}px`);
+      node.style.setProperty('--backdrop-opacity','0');
+      setTimeout(()=>closeModal({immediate:true}),180);
+    } else reset();
+  };
+  sheet.addEventListener('pointerdown',down);
+  sheet.addEventListener('pointermove',move,{passive:false});
+  sheet.addEventListener('pointerup',up);
+  sheet.addEventListener('pointercancel',reset);
+}
 function confirmModal(title, message, confirmText, onConfirm, dangerous = false) {
   const node = openModal(title, `<p style="margin-top:0;color:var(--text-secondary)">${esc(message)}</p><div class="button-row"><button class="button" data-modal-close>Отмена</button><button class="button ${dangerous?'danger':'primary'}" id="confirmButton">${esc(confirmText)}</button></div>`);
   node.querySelector('#confirmButton').addEventListener('click', async()=>{ await onConfirm(); closeModal(); });
@@ -673,28 +769,85 @@ function openClearDataModal() {
   button.addEventListener('click', async () => { await clearAll(); closeModal(); });
 }
 
+async function handleAppAction(action, id) {
+  if(action==='new-entry')openEntryForm();
+  else if(action==='new-task')openTaskForm();
+  else if(action==='new-inspection')openInspectionForm();
+  else if(action==='new-equipment')openEquipmentForm();
+  else if(action==='entry-detail')openEntryDetail(id);
+  else if(action==='task-detail')openTaskDetail(id);
+  else if(action==='inspection-detail')openInspectionDetail(id);
+  else if(action==='equipment-detail')openEquipmentDetail(id);
+  else if(action==='edit-entry'){const item=state.data.entries.find(x=>x.id===id);if(item)openEntryForm(item);}
+  else if(action==='edit-task'){const item=state.data.tasks.find(x=>x.id===id);if(item)openTaskForm(item);}
+  else if(action==='edit-inspection'){const item=state.data.inspections.find(x=>x.id===id);if(item)openInspectionForm(item);}
+  else if(action==='edit-equipment'){const item=state.data.equipment.find(x=>x.id===id);if(item)openEquipmentForm(item);}
+  else if(action==='delete-entry')confirmModal('Удалить запись?','Фотографии и связанные данные записи будут удалены.','Удалить',async()=>{await dbDelete('entries',id);toast('Запись удалена');await render();},true);
+  else if(action==='delete-inspection')confirmModal('Удалить техосмотр?','Запись техосмотра и фотографии будут удалены.','Удалить',async()=>{await dbDelete('inspections',id);toast('Осмотр удалён');await render();},true);
+  else if(action==='delete-equipment')confirmModal('Удалить оборудование?','Карточка будет удалена. Журнал и осмотры останутся.','Удалить',async()=>{await dbDelete('equipment',id);toast('Оборудование удалено');await render();},true);
+  else if(action==='route')go(id);
+  else if(action==='toggle-task'){const t=state.data.tasks.find(x=>x.id===id);if(t){t.completed=!t.completed;t.completedAt=t.completed?nowISO():null;t.updatedAt=nowISO();await dbPut('tasks',t);toast(t.completed?'Задача выполнена':'Задача возвращена');await render();}}
+  else if(action==='copy-report'){await navigator.clipboard.writeText(buildDailyReport());toast('Отчёт скопирован');}
+  else if(action==='share-report'){const text=buildDailyReport();if(navigator.share)await navigator.share({title:'Итоги рабочего дня',text});else{await navigator.clipboard.writeText(text);toast('Web Share недоступен — текст скопирован');}}
+  else if(action==='export-data')await exportData();
+  else if(action==='add-samples')await addSamples();
+  else if(action==='remove-samples')await removeSamples();
+  else if(action==='clear-data')openClearDataModal();
+}
+function closeOpenSwipeRow(except=null) {
+  document.querySelectorAll('[data-swipe-row].open').forEach(row=>{
+    if(row!==except){row.classList.remove('open','dragging');row.querySelector('.swipe-content')?.style.removeProperty('--swipe-x');}
+  });
+  if(!except)interactionState.openSwipeRow=null;
+}
+function bindSwipeRows(root) {
+  root.querySelectorAll('[data-swipe-row]').forEach(row=>{
+    const content=row.querySelector('.swipe-content');if(!content)return;
+    let startX=0,startY=0,current=0,pointerId=null,axis=null,moved=false;
+    const width=132;
+    content.addEventListener('pointerdown',e=>{
+      if(e.pointerType==='mouse'&&e.button!==0)return;
+      closeOpenSwipeRow(row);startX=e.clientX;startY=e.clientY;pointerId=e.pointerId;axis=null;moved=false;current=row.classList.contains('open')?-width:0;content.setPointerCapture?.(pointerId);
+    });
+    content.addEventListener('pointermove',e=>{
+      if(e.pointerId!==pointerId)return;const dx=e.clientX-startX,dy=e.clientY-startY;
+      if(!axis&&Math.hypot(dx,dy)>7)axis=Math.abs(dx)>Math.abs(dy)*1.18?'x':'y';
+      if(axis!=='x')return;e.preventDefault();moved=true;row.classList.add('dragging');
+      const next=Math.max(-width,Math.min(12,current+dx));content.style.setProperty('--swipe-x',`${next}px`);
+    },{passive:false});
+    const finish=e=>{
+      if(e.pointerId!==pointerId)return;const dx=e.clientX-startX;content.releasePointerCapture?.(pointerId);row.classList.remove('dragging');
+      if(axis==='x'&&current+dx<-48){row.classList.add('open');content.style.setProperty('--swipe-x',`-${width}px`);interactionState.openSwipeRow=row;}
+      else{row.classList.remove('open');content.style.setProperty('--swipe-x','0px');if(interactionState.openSwipeRow===row)interactionState.openSwipeRow=null;}
+      if(moved){content.dataset.suppressClick='true';setTimeout(()=>delete content.dataset.suppressClick,0);}pointerId=null;
+    };
+    content.addEventListener('pointerup',finish);content.addEventListener('pointercancel',finish);
+    content.addEventListener('click',e=>{if(content.dataset.suppressClick==='true'){e.preventDefault();e.stopImmediatePropagation();}},true);
+  });
+  root.querySelectorAll('[data-gesture-action]').forEach(btn=>btn.addEventListener('click',async e=>{e.stopPropagation();closeOpenSwipeRow();await handleAppAction(btn.dataset.gestureAction,btn.dataset.id);}));
+}
+function bindEdgeBackGesture() {
+  let startX=0,startY=0,pointerId=null;
+  addEventListener('pointerdown',e=>{
+    if(e.clientX>22||document.querySelector('[data-modal-backdrop]'))return;
+    if(!['tasks','equipment','report','settings','install'].includes(state.route))return;
+    startX=e.clientX;startY=e.clientY;pointerId=e.pointerId;
+  });
+  addEventListener('pointerup',e=>{
+    if(e.pointerId!==pointerId)return;
+    if(e.clientX-startX>80&&Math.abs(e.clientY-startY)<70)go('more');
+    pointerId=null;
+  });
+}
+
 function bindPageEvents() {
   const main=document.getElementById('appMain');
   main.querySelectorAll('[data-route-link]').forEach(el=>el.addEventListener('click',()=>go(el.dataset.routeLink)));
   main.querySelectorAll('[data-action]').forEach(el=>el.addEventListener('click',async event=>{
-    event.stopPropagation();const action=el.dataset.action,id=el.dataset.id;
-    if(action==='new-entry')openEntryForm();
-    else if(action==='new-task')openTaskForm();
-    else if(action==='new-inspection')openInspectionForm();
-    else if(action==='new-equipment')openEquipmentForm();
-    else if(action==='entry-detail')openEntryDetail(id);
-    else if(action==='task-detail')openTaskDetail(id);
-    else if(action==='inspection-detail')openInspectionDetail(id);
-    else if(action==='equipment-detail')openEquipmentDetail(id);
-    else if(action==='route')go(id);
-    else if(action==='toggle-task'){const t=state.data.tasks.find(x=>x.id===id);if(t){t.completed=!t.completed;t.completedAt=t.completed?nowISO():null;t.updatedAt=nowISO();await dbPut('tasks',t);toast(t.completed?'Задача выполнена':'Задача возвращена');await render();}}
-    else if(action==='copy-report'){await navigator.clipboard.writeText(buildDailyReport());toast('Отчёт скопирован');}
-    else if(action==='share-report'){const text=buildDailyReport();if(navigator.share)await navigator.share({title:'Итоги рабочего дня',text});else{await navigator.clipboard.writeText(text);toast('Web Share недоступен — текст скопирован');}}
-    else if(action==='export-data')await exportData();
-    else if(action==='add-samples')await addSamples();
-    else if(action==='remove-samples')await removeSamples();
-    else if(action==='clear-data')openClearDataModal();
+    event.stopPropagation();
+    await handleAppAction(el.dataset.action,el.dataset.id);
   }));
+  bindSwipeRows(main);
   const q=main.querySelector('#journalSearch');if(q)q.addEventListener('input',debounce(()=>{state.journal.query=q.value;render();},180));
   [['journalType','type'],['journalObject','object'],['journalStatus','status'],['journalPeriod','period']].forEach(([id,key])=>main.querySelector(`#${id}`)?.addEventListener('change',e=>{state.journal[key]=e.target.value;render();}));
   main.querySelectorAll('[data-task-filter]').forEach(b=>b.addEventListener('click',()=>{state.taskFilter=b.dataset.taskFilter;render();}));
@@ -711,6 +864,9 @@ async function init(){
   document.getElementById('themeQuickBtn').addEventListener('click',cycleTheme);
   document.querySelectorAll('.nav-button').forEach(btn=>btn.addEventListener('click',()=>go(btn.dataset.route)));
   document.getElementById('recordButton').addEventListener('click',()=>openEntryForm());
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+  document.addEventListener('pointerdown',e=>{if(interactionState.openSwipeRow&&!e.target.closest('[data-swipe-row]'))closeOpenSwipeRow();});
+  bindEdgeBackGesture();
   addEventListener('hashchange',render);addEventListener('online',updateOnlineStatus);addEventListener('offline',updateOnlineStatus);updateOnlineStatus();
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',async()=>{if(await getSetting('theme','system')==='system'){setTheme('system');}});
   if('serviceWorker' in navigator){try{await navigator.serviceWorker.register('./sw.js',{scope:'./'});}catch(e){console.warn('Service worker registration failed',e);}}
