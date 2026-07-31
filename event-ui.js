@@ -154,7 +154,7 @@ function openEventEditor(initialDraft, isExisting) {
       <section class="form-section"><div class="form-section-head"><div><h3>Системы</h3><p>Включите только то, что используется на этом мероприятии</p></div></div>
         <div class="settings-list compact-settings">
           ${systemToggleRow('БПС','Сервер, контроллеры и билетная база','bps',draft.systems.bps)}
-          <div class="settings-row"><span><strong>СИБ</strong><small>Режим использования системы</small></span><select class="inline-select" data-system-select="sib">${BpsEventLogic.SIB_MODES.map(item => `<option value="${item.value}" ${draft.systems.sib===item.value?'selected':''}>${item.label}</option>`).join('')}</select></div>
+          <div class="settings-row"><span class="settings-copy"><strong>СИБ</strong><small>Режим использования системы</small></span><select class="inline-select" data-system-select="sib">${BpsEventLogic.SIB_MODES.map(item => `<option value="${item.value}" ${draft.systems.sib===item.value?'selected':''}>${item.label}</option>`).join('')}</select></div>
           ${systemToggleRow('Онлайн-продажи','Доступ к билетному агрегатору','onlineSales',draft.systems.onlineSales)}
           ${systemToggleRow('Продажи в кассах','Проверки кассовых рабочих мест','offlineSales',draft.systems.offlineSales)}
           ${systemToggleRow('Печать билетов','Принтеры и тестовая печать','printing',draft.systems.printing)}
@@ -188,7 +188,7 @@ function openEventEditor(initialDraft, isExisting) {
   };
 
   function systemToggleRow(title, subtitle, key, enabled) {
-    return `<div class="settings-row"><span><strong>${esc(title)}</strong><small>${esc(subtitle)}</small></span><button type="button" class="switch ${enabled?'on':''}" data-system-toggle="${key}" role="switch" aria-checked="${enabled}"></button></div>`;
+    return `<div class="settings-row"><span class="settings-copy"><strong>${esc(title)}</strong><small>${esc(subtitle)}</small></span><button type="button" class="switch ${enabled?'on':''}" data-system-toggle="${key}" role="switch" aria-checked="${enabled}"></button></div>`;
   }
 
   function bindEditorEvents() {

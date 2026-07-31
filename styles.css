@@ -1116,9 +1116,22 @@ label { display: block; margin: 0 0 var(--space-2); font-size: 14px; font-weight
 .inline-message svg { width: 18px; height: 18px; flex: 0 0 18px; }
 .inline-message.warning { background: var(--warning-muted); color: var(--warning); }
 
-.settings-list.compact-settings { border: 1px solid var(--border); border-radius: var(--radius-card); overflow: hidden; background: var(--surface); }
-.compact-settings .settings-row { min-height: 64px; padding: var(--space-3); }
-.inline-select { width: min(180px, 46%); min-height: 40px; }
+.settings-list.compact-settings { border: 1px solid var(--border); border-radius: var(--radius-card); overflow: hidden; background: var(--surface); display: grid; }
+.compact-settings .settings-row {
+  min-height: 72px;
+  padding: var(--space-3) var(--space-4);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+.compact-settings .settings-row + .settings-row { border-top: 1px solid var(--border); }
+.settings-copy { min-width: 0; display: grid; gap: 4px; }
+.settings-copy strong { display: block; font-size: 14px; line-height: 1.25; letter-spacing: -.01em; }
+.settings-copy small { display: block; color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
+.compact-settings .switch,
+.compact-settings .inline-select { justify-self: end; }
+.inline-select { width: min(188px, 48vw); max-width: 100%; min-height: 40px; }
 
 .config-stack { display: grid; gap: var(--space-3); }
 .config-card { border: 1px solid var(--border); border-radius: var(--radius-card); overflow: hidden; background: var(--surface); }
@@ -1203,6 +1216,14 @@ label { display: block; margin: 0 0 var(--space-2); font-size: 14px; font-weight
   .assignment-row input { padding-inline: var(--space-2); font-size: 12px; }
   .turnstile-row { grid-template-columns: minmax(0,1fr) 142px; }
   .event-summary-grid span { font-size: 9px; }
+  .compact-settings .settings-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: var(--space-2);
+  }
+  .compact-settings .switch,
+  .compact-settings .inline-select { justify-self: start; }
+  .inline-select { width: 100%; }
 }
 @media (max-width: 365px) {
   .assignment-row { grid-template-columns: minmax(0,1fr) 68px 68px 32px; gap: var(--space-1); }

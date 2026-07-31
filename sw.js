@@ -1,4 +1,4 @@
-const CACHE = 'bps-pult-v2.0.0-alpha.1';
+const CACHE = 'bps-pult-v2.0.0-alpha.2';
 const APP_SHELL = ['./', './index.html', './styles.css', './event-logic.js', './app.js', './event-ui.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', event => {
