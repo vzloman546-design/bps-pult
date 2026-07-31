@@ -1,5 +1,5 @@
 // Релиз 2.5.1: активная версия обслуживает только собственный проверенный кэш оболочки.
-const VERSION = '2.5.1';
+const VERSION = '2.6.0';
 const CACHE = `bps-pult-${VERSION}`;
 const APP_SHELL = [
   './', './index.html', './styles.css', './stability-logic.js', './event-logic.js', './knowledge-logic.js', './productivity-logic.js',
