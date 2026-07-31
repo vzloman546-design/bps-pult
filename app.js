@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const SCHEMA_VERSION = 1;
 const DB_NAME = 'bps-pult-local';
 const DB_VERSION = 1;
@@ -198,6 +198,10 @@ function setTheme(theme) {
     : theme;
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themePreference = theme;
+  try { localStorage.setItem('bps-theme', theme); } catch (_) {}
+  document.documentElement.style.backgroundColor = resolved === 'dark' ? '#0e100f' : '#f4f4f2';
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
+  if (themeMeta) themeMeta.content = resolved === 'dark' ? '#0e100f' : '#f4f4f2';
   document.getElementById('themeQuickBtn').innerHTML = icon(resolved === 'dark' ? 'sun' : 'moon');
 }
 async function cycleTheme() {
@@ -290,47 +294,42 @@ async function renderToday() {
   const unresolved = entries.filter(e => ['Не устранено','Повторная проверка','Работает — наблюдать','Ожидается ответ'].includes(e.status));
   const attention = [...overdue.map(t => ({ kind:'task', ...t })), ...unresolved.slice(0,4).map(e => ({ kind:'entry', ...e }))].slice(0,5);
   const nearest = open.slice().sort((a,b) => (a.dueAt ? new Date(a.dueAt) : Infinity) - (b.dueAt ? new Date(b.dueAt) : Infinity)).slice(0,5);
+  const recentToday = todayEntries.slice(0,4);
   const hour = new Date().getHours();
   const greeting = hour < 6 ? 'Доброй ночи' : hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер';
-  const install = !isStandalone() ? `<div class="section"><div class="card notice-card install-card"><div class="notice-icon">${icon('install')}</div><div><h3>Установить как приложение</h3><p>Откройте инструкцию и закрепите «БПС Пульт» на экране «Домой».</p><button class="text-button" data-route-link="install">Показать шаги</button></div></div></div>` : '';
+  const todayLabel = formatDate(new Date(), { weekday:'long', day:'numeric', month:'long' });
+  const install = !isStandalone() ? `<div class="section"><div class="inline-notice"><span class="inline-notice-icon">${icon('install')}</span><span><strong>Установить на iPhone</strong><small>Работает офлайн после первого запуска</small></span><button class="text-button" data-route-link="install">Открыть</button></div></div>` : '';
   return `
-    <section class="section hero-card">
-      <div class="hero-kicker">Локальная рабочая память</div>
-      <h2 class="hero-title">${greeting}, Артём</h2>
-      <p class="hero-text">Все данные находятся на этом устройстве. Сегодня: ${todayEntries.length} ${plural(todayEntries.length,'запись','записи','записей')}.</p>
-      <div class="hero-actions"><button class="button primary" data-action="new-entry">${icon('plus')}Записать событие</button><button class="button" data-action="new-task">${icon('task')}Создать задачу</button></div>
+    <section class="today-intro">
+      <div class="today-greeting">${greeting}, Артём</div>
+      <div class="today-date">${todayLabel}</div>
+      <div class="local-state">${icon('database')} Данные хранятся только на этом iPhone</div>
     </section>
     ${install}
     <section class="section">
-      <div class="section-head"><div><h2 class="section-title">Сводка</h2><p class="section-subtitle">Актуальное состояние работы</p></div></div>
-      <div class="metrics-grid">
-        <button class="metric-card" data-route-link="tasks"><span class="metric-icon">${icon('task')}</span><div class="metric-value">${open.length}</div><div class="metric-label">Открытые задачи</div></button>
-        <button class="metric-card ${overdue.length ? 'danger' : ''}" data-route-link="tasks"><span class="metric-icon">${icon('clock')}</span><div class="metric-value">${overdue.length}</div><div class="metric-label">Просрочено</div></button>
-        <button class="metric-card success" data-route-link="journal"><span class="metric-icon">${icon('journal')}</span><div class="metric-value">${todayEntries.length}</div><div class="metric-label">Записи сегодня</div></button>
-        <button class="metric-card" data-route-link="inspections"><span class="metric-icon">${icon('inspection')}</span><div class="metric-value">${monthInspections.length}</div><div class="metric-label">Осмотры за месяц</div></button>
+      <div class="status-strip" aria-label="Сводка">
+        <button class="status-cell" data-route-link="tasks"><strong>${open.length}</strong><span>Задачи</span></button>
+        <button class="status-cell ${overdue.length ? 'is-danger' : ''}" data-route-link="tasks"><strong>${overdue.length}</strong><span>Просрочено</span></button>
+        <button class="status-cell" data-route-link="journal"><strong>${todayEntries.length}</strong><span>Записи</span></button>
+        <button class="status-cell" data-route-link="inspections"><strong>${monthInspections.length}</strong><span>Осмотры</span></button>
       </div>
     </section>
     <section class="section">
-      <div class="section-head"><div><h2 class="section-title">Быстрые действия</h2></div></div>
-      <div class="quick-actions">
-        <button class="quick-action" data-action="new-entry"><span class="quick-icon">${icon('journal')}</span><strong>Записать<br>событие</strong></button>
-        <button class="quick-action" data-action="new-task"><span class="quick-icon">${icon('task')}</span><strong>Создать<br>задачу</strong></button>
-        <button class="quick-action" data-action="new-inspection"><span class="quick-icon">${icon('inspection')}</span><strong>Начать<br>осмотр</strong></button>
-      </div>
-    </section>
-    <section class="section">
-      <div class="section-head"><div><h2 class="section-title">Требует внимания</h2><p class="section-subtitle">Просрочки и незакрытые проблемы</p></div></div>
+      <div class="section-head"><div><h2 class="section-title">Требует внимания</h2><p class="section-subtitle">Просрочки и незакрытые проблемы</p></div>${attention.length ? `<span class="count-badge">${attention.length}</span>` : ''}</div>
       ${attention.length ? `<div class="list-card">${attention.map(item => item.kind === 'task'
         ? listRow({ id:item.id, action:'task-detail', iconName:'clock', tone:isOverdue(item)?'danger':'warning', title:item.title, meta:`${item.object || 'Без объекта'} · ${item.dueAt ? formatDateTime(item.dueAt) : 'Без срока'}`, side:`<span class="status-pill ${statusTone(item.priority)}">${esc(item.priority)}</span>` })
         : listRow({ id:item.id, action:'entry-detail', iconName:entryIcon(item.type), tone:statusTone(item.status), title:item.equipment || item.type, meta:`${item.object} · ${item.status}`, side:formatDate(item.date,{day:'numeric',month:'short'}) })
-      ).join('')}</div>` : emptyState('check','Всё спокойно','Просроченных задач и незакрытых проблем нет.')}
+      ).join('')}</div>` : `<div class="quiet-state">${icon('check')}<span><strong>Всё спокойно</strong><small>Нет просроченных задач и незакрытых проблем</small></span></div>`}
     </section>
     <section class="section">
-      <div class="section-head"><div><h2 class="section-title">Ближайшие задачи</h2></div><button class="text-button" data-route-link="tasks">Все</button></div>
-      ${nearest.length ? `<div class="list-card">${nearest.map(taskRow).join('')}</div>` : emptyState('task','Задач пока нет','Создайте первую задачу, чтобы ничего не держать в голове.', '<button class="button primary small" data-action="new-task">Создать задачу</button>')}
+      <div class="section-head"><div><h2 class="section-title">Ближайшие задачи</h2></div><button class="text-button" data-action="new-task">Новая задача</button></div>
+      ${nearest.length ? `<div class="list-card">${nearest.map(taskRow).join('')}</div>` : `<div class="quiet-state">${icon('task')}<span><strong>Задач пока нет</strong><small>Новая задача создаётся одной кнопкой</small></span></div>`}
+    </section>
+    <section class="section">
+      <div class="section-head"><div><h2 class="section-title">Сегодня в журнале</h2></div><button class="text-button" data-route-link="journal">Все записи</button></div>
+      ${recentToday.length ? `<div class="list-card">${recentToday.map(entryRow).join('')}</div>` : `<div class="quiet-state">${icon('journal')}<span><strong>Записей ещё нет</strong><small>Нажмите «Записать» в нижней панели</small></span></div>`}
     </section>`;
 }
-
 function plural(number, one, few, many) {
   const n = Math.abs(number) % 100, n1 = n % 10;
   if (n > 10 && n < 20) return many;
@@ -549,7 +548,6 @@ function setupSheetGestures(node) {
     sheet.classList.remove('dragging');
     sheet.style.removeProperty('--sheet-y');
     node.style.removeProperty('--backdrop-opacity');
-    document.querySelector('.app-shell')?.style.removeProperty('--app-scale');
     pointerId=null; dragging=false;
   };
   const down = event => {
@@ -568,7 +566,6 @@ function setupSheetGestures(node) {
     const progress=Math.min(1,y/Math.max(240,sheet.offsetHeight*.42));
     sheet.style.setProperty('--sheet-y',`${y}px`);
     node.style.setProperty('--backdrop-opacity',String(.48*(1-progress*.88)));
-    document.querySelector('.app-shell')?.style.setProperty('--app-scale',String(.985+progress*.015));
     lastY=event.clientY; lastTime=performance.now();
   };
   const up = event => {
