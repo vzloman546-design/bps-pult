@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.3.0';
 const SCHEMA_VERSION = 1;
 const DB_NAME = 'bps-pult-local';
 const DB_VERSION = 1;
@@ -377,8 +377,8 @@ function entryRow(entry) {
   return listRow({
     id: entry.id, action:'entry-detail', iconName:entryIcon(entry.type), tone:statusTone(entry.status),
     title: entry.equipment || entry.type,
-    meta: `${entry.object} · ${entry.type}`,
-    side: `<span class="status-pill ${statusTone(entry.status)}">${esc(entry.status)}</span><div style="margin-top:4px">${formatDate(entry.date,{hour:'2-digit',minute:'2-digit'})}</div>`
+    meta: `${entry.object} · ${entry.type} · ${formatDate(entry.date,{hour:'2-digit',minute:'2-digit'})}`,
+    side: `<span class="status-pill ${statusTone(entry.status)}">${esc(entry.status)}</span>`
   });
 }
 
@@ -386,7 +386,7 @@ function taskRow(task) {
   const due = task.dueAt ? (isToday(task.dueAt) ? `Сегодня, ${formatDate(task.dueAt,{hour:'2-digit',minute:'2-digit'})}` : formatDate(task.dueAt,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})) : 'Без срока';
   const content = `<div class="list-row swipe-content" data-action="task-detail" data-id="${esc(task.id)}">
     <button class="task-check ${task.completed ? 'done' : ''}" data-action="toggle-task" data-id="${esc(task.id)}" aria-label="${task.completed?'Вернуть задачу':'Выполнить задачу'}">${task.completed ? icon('check') : ''}</button>
-    <button class="list-row-main" data-action="task-detail" data-id="${esc(task.id)}" style="border:0;background:none;color:inherit;text-align:left;padding:0;min-width:0">
+    <button class="list-row-main list-row-main-button" data-action="task-detail" data-id="${esc(task.id)}">
       <span class="list-row-title ${task.completed?'task-title-done':''}">${esc(task.title)}</span><span class="list-row-meta">${esc(task.object || 'Без объекта')} · ${esc(due)}</span>
     </button>
     <span class="list-row-side"><span class="status-pill ${isOverdue(task)?'danger':statusTone(task.priority)}">${isOverdue(task)?'Просрочено':esc(task.priority)}</span></span>
@@ -411,8 +411,8 @@ function renderTasks() {
 
 function renderInspections() {
   const list = state.data.inspections;
-  return `<section class="section hero-card"><div class="hero-kicker">Плановое обслуживание</div><h2 class="hero-title">Технические осмотры</h2><p class="hero-text">Проходите единый чек-лист на месте и сохраняйте историю оборудования.</p><div class="hero-actions"><button class="button primary" data-action="new-inspection">${icon('inspection')}Начать осмотр</button></div></section>
-    <section class="section"><div class="section-head"><div><h2 class="section-title">История</h2><p class="section-subtitle">${list.length} ${plural(list.length,'осмотр','осмотра','осмотров')}</p></div></div>
+  return `<section class="page-lead"><p>Единый чек-лист для турникетов, касс и рабочих мест. Результаты сохраняются в локальной истории.</p><button class="button primary" data-action="new-inspection">${icon('inspection')}Начать осмотр</button></section>
+    <section class="section"><div class="section-head"><div><h2 class="section-title">История осмотров</h2><p class="section-subtitle">${list.length} ${plural(list.length,'осмотр','осмотра','осмотров')}</p></div></div>
       ${list.length ? `<div class="list-card">${list.map(i => {
         const issues = i.items.filter(x=>x.status==='issue').length;
         return listRow({ id:i.id, action:'inspection-detail', iconName:'inspection', tone:issues?'warning':'success', title:i.equipment || 'Техосмотр', meta:`${i.object} · ${formatDateTime(i.date)}`, side:`<span class="status-pill ${issues?'warning':'success'}">${issues?`${issues} замеч.`:'Исправно'}</span>` });
@@ -429,7 +429,7 @@ function renderMore() {
     ${listRow({id:'settings',action:'route',iconName:'settings',title:'Настройки и данные',meta:'Тема, резервная копия и хранилище'})}
     ${listRow({id:'install',action:'route',iconName:'install',title:'Как установить',meta:'Добавить приложение на экран «Домой»'})}
   </div></section>
-  <section class="section"><div class="card notice-card"><div class="notice-icon" style="background:var(--info-subtle);color:var(--info)">${icon('database')}</div><div><h3>Только локальные данные</h3><p>Записи не отправляются на сервер. Регулярно делайте резервную копию в настройках.</p></div></div></section>`;
+  <section class="section"><div class="card notice-card"><div class="notice-icon info">${icon('database')}</div><div><h3>Только локальные данные</h3><p>Записи не отправляются на сервер. Регулярно делайте резервную копию в настройках.</p></div></div></section>`;
 }
 
 function renderEquipment() {
@@ -472,7 +472,7 @@ function buildDailyReport() {
 }
 function renderReport() {
   const text = buildDailyReport();
-  return `<section class="section"><div class="card notice-card"><div class="notice-icon" style="background:var(--accent-subtle);color:var(--accent)">${icon('report')}</div><div><h3>Отчёт собран автоматически</h3><p>Используются сегодняшние записи, осмотры и завершённые задачи.</p></div></div></section>
+  return `<section class="section"><div class="card notice-card"><div class="notice-icon accent">${icon('report')}</div><div><h3>Отчёт собран автоматически</h3><p>Используются сегодняшние записи, осмотры и завершённые задачи.</p></div></div></section>
     <section class="section"><div class="report-box" id="reportText">${esc(text)}</div></section>
     <section class="section"><div class="button-row"><button class="button" data-action="copy-report">${icon('copy')}Скопировать</button><button class="button primary" data-action="share-report">${icon('share')}Поделиться</button></div></section>`;
 }
@@ -492,9 +492,9 @@ function formatBytes(bytes) {
 async function renderSettings() {
   const theme = await getSetting('theme','system');
   const s = await storageInfo();
-  return `<section class="section"><div class="section-head"><div><h2 class="section-title">Внешний вид</h2></div></div><div class="card"><div class="field" style="margin:0"><label>Тема приложения</label><div class="segmented">${['system','light','dark'].map(t=>`<button class="segment-button ${t===theme?'active':''}" data-theme-choice="${t}">${{system:'Системная',light:'Светлая',dark:'Тёмная'}[t]}</button>`).join('')}</div></div></div></section>
-    <section class="section"><div class="section-head"><div><h2 class="section-title">Локальное хранилище</h2><p class="section-subtitle">Данные находятся только на этом устройстве</p></div></div><div class="card"><div class="data-stat"><span>Использовано</span><strong>${s.text}</strong></div><div class="data-stat"><span>Записи</span><strong>${state.data.entries.length}</strong></div><div class="data-stat"><span>Задачи</span><strong>${state.data.tasks.length}</strong></div><div class="data-stat"><span>Техосмотры</span><strong>${state.data.inspections.length}</strong></div><div class="data-stat"><span>Оборудование</span><strong>${state.data.equipment.length}</strong></div><div class="progress-bar" style="margin-top:13px"><div class="progress-fill" style="width:${s.percent}%"></div></div></div></section>
-    <section class="section"><div class="section-head"><div><h2 class="section-title">Резервная копия</h2></div></div><div class="warning-box">Удаление PWA, очистка данных Safari или сброс iPhone могут удалить журнал. Экспортируйте резервную копию после важных изменений.</div><div class="button-row" style="margin-top:10px"><button class="button" data-action="export-data">${icon('download')}Экспорт JSON</button><label class="button primary" style="cursor:pointer">${icon('upload')}Импорт JSON<input id="importInput" type="file" accept="application/json,.json" hidden></label></div></section>
+  return `<section class="section"><div class="section-head"><div><h2 class="section-title">Внешний вид</h2></div></div><div class="card"><div class="field flush"><label>Тема приложения</label><div class="segmented">${['system','light','dark'].map(t=>`<button class="segment-button ${t===theme?'active':''}" data-theme-choice="${t}">${{system:'Системная',light:'Светлая',dark:'Тёмная'}[t]}</button>`).join('')}</div></div></div></section>
+    <section class="section"><div class="section-head"><div><h2 class="section-title">Локальное хранилище</h2><p class="section-subtitle">Данные находятся только на этом устройстве</p></div></div><div class="card"><div class="data-stat"><span>Использовано</span><strong>${s.text}</strong></div><div class="data-stat"><span>Записи</span><strong>${state.data.entries.length}</strong></div><div class="data-stat"><span>Задачи</span><strong>${state.data.tasks.length}</strong></div><div class="data-stat"><span>Техосмотры</span><strong>${state.data.inspections.length}</strong></div><div class="data-stat"><span>Оборудование</span><strong>${state.data.equipment.length}</strong></div><div class="progress-bar progress-spaced"><div class="progress-fill" style="width:${s.percent}%"></div></div></div></section>
+    <section class="section"><div class="section-head"><div><h2 class="section-title">Резервная копия</h2></div></div><div class="warning-box">Удаление PWA, очистка данных Safari или сброс iPhone могут удалить журнал. Экспортируйте резервную копию после важных изменений.</div><div class="button-row spaced"><button class="button" data-action="export-data">${icon('download')}Экспорт JSON</button><label class="button primary file-button">${icon('upload')}Импорт JSON<input id="importInput" type="file" accept="application/json,.json" hidden></label></div></section>
     <section class="section"><div class="section-head"><div><h2 class="section-title">Тестирование</h2></div></div><div class="button-row"><button class="button" data-action="add-samples">Добавить примеры</button><button class="button" data-action="remove-samples">Удалить примеры</button></div></section>
     <section class="section"><div class="danger-zone"><h3>Удалить все данные</h3><p>Действие нельзя отменить без резервной копии.</p><button class="button danger full" data-action="clear-data">${icon('trash')}Очистить приложение</button></div></section>
     <section class="section"><div class="card"><div class="data-stat"><span>Версия</span><strong>${APP_VERSION}</strong></div><div class="data-stat"><span>Схема данных</span><strong>${SCHEMA_VERSION}</strong></div><div class="data-stat"><span>Режим</span><strong>${isStandalone()?'Установлено':'Safari'}</strong></div></div></section>`;
@@ -502,8 +502,8 @@ async function renderSettings() {
 
 function renderInstall() {
   const standalone = isStandalone();
-  return `<section class="section hero-card"><div class="hero-kicker">Установка без App Store</div><h2 class="hero-title">Добавьте на экран «Домой»</h2><p class="hero-text">После первого открытия приложение сохранит оболочку и будет работать без интернета.</p></section>
-    <section class="section"><div class="card">${standalone ? `<div class="notice-card"><div class="notice-icon" style="background:var(--success-subtle);color:var(--success)">${icon('check')}</div><div><h3>Приложение уже установлено</h3><p>Вы открыли его в автономном режиме с экрана «Домой».</p></div></div>` : `<div class="detail-grid"><div class="detail-field"><div class="detail-field-label">Шаг 1</div><div class="detail-field-value">Откройте эту страницу именно в Safari.</div></div><div class="detail-field"><div class="detail-field-label">Шаг 2</div><div class="detail-field-value">Нажмите кнопку «Поделиться» в нижней панели Safari.</div></div><div class="detail-field"><div class="detail-field-label">Шаг 3</div><div class="detail-field-value">Выберите «На экран Домой», затем «Добавить».</div></div><div class="detail-field"><div class="detail-field-label">Шаг 4</div><div class="detail-field-value">Откройте новую иконку один раз при наличии интернета. После этого включите авиарежим и проверьте запуск.</div></div></div>`}</div></section>
+  return `<section class="page-lead"><p>Добавьте сайт на экран «Домой». После первого открытия оболочка сохранится на iPhone и будет работать без интернета.</p></section>
+    <section class="section"><div class="card">${standalone ? `<div class="notice-card"><div class="notice-icon success">${icon('check')}</div><div><h3>Приложение уже установлено</h3><p>Вы открыли его в автономном режиме с экрана «Домой».</p></div></div>` : `<div class="detail-grid"><div class="detail-field"><div class="detail-field-label">Шаг 1</div><div class="detail-field-value">Откройте эту страницу именно в Safari.</div></div><div class="detail-field"><div class="detail-field-label">Шаг 2</div><div class="detail-field-value">Нажмите кнопку «Поделиться» в нижней панели Safari.</div></div><div class="detail-field"><div class="detail-field-label">Шаг 3</div><div class="detail-field-value">Выберите «На экран Домой», затем «Добавить».</div></div><div class="detail-field"><div class="detail-field-label">Шаг 4</div><div class="detail-field-value">Откройте новую иконку один раз при наличии интернета. После этого включите авиарежим и проверьте запуск.</div></div></div>`}</div></section>
     <section class="section"><div class="card notice-card"><div class="notice-icon">${icon('alert')}</div><div><h3>Важно о данных</h3><p>Записи хранятся локально. Перед удалением приложения сделайте экспорт JSON в разделе «Настройки и данные».</p></div></div></section>`;
 }
 
@@ -524,7 +524,9 @@ function openModal(title, bodyHtml, options = {}) {
   options.onOpen?.(node);
   requestAnimationFrame(()=>{
     node.classList.add('visible');
-    node.querySelector('input,select,textarea,button')?.focus({preventScroll:true});
+    if (matchMedia('(min-width: 700px)').matches) {
+      node.querySelector('.modal-body input:not([type="file"]), .modal-body select, .modal-body textarea')?.focus({preventScroll:true});
+    }
   });
   return node;
 }
@@ -589,7 +591,7 @@ function setupSheetGestures(node) {
   sheet.addEventListener('pointercancel',reset);
 }
 function confirmModal(title, message, confirmText, onConfirm, dangerous = false) {
-  const node = openModal(title, `<p style="margin-top:0;color:var(--text-secondary)">${esc(message)}</p><div class="button-row"><button class="button" data-modal-close>Отмена</button><button class="button ${dangerous?'danger':'primary'}" id="confirmButton">${esc(confirmText)}</button></div>`);
+  const node = openModal(title, `<p class="confirm-copy">${esc(message)}</p><div class="button-row"><button class="button" data-modal-close>Отмена</button><button class="button ${dangerous?'danger':'primary'}" id="confirmButton">${esc(confirmText)}</button></div>`);
   node.querySelector('#confirmButton').addEventListener('click', async()=>{ await onConfirm(); closeModal(); });
 }
 
@@ -629,7 +631,7 @@ function openEntryForm(existing = null) {
     <div class="field"><label class="required" for="entryDescription">Описание</label><textarea id="entryDescription" required placeholder="Что произошло и что было сделано">${esc(existing?.description||'')}</textarea><div class="field-help">Можно использовать диктовку клавиатуры iPhone.</div></div>
     <div class="form-grid two"><div class="field"><label class="required" for="entryStatus">Статус</label><select id="entryStatus" required>${optionsHtml(ENTRY_STATUSES,existing?.status||'Информация')}</select></div><div class="field"><label class="required" for="entryDate">Дата и время</label><input id="entryDate" type="datetime-local" required value="${localDateTimeValue(existing?.date?new Date(existing.date):new Date())}"></div></div>
     <div class="field"><label>Фотографии</label><div id="entryPhotos">${photoPickerHtml(photos)}</div></div>
-    ${!existing?`<div class="card" style="padding:13px;margin-bottom:15px"><div class="toggle-row"><div class="toggle-copy"><strong>Создать связанную задачу</strong><span>Напомнить о повторной проверке</span></div><button type="button" class="switch" id="linkedTaskSwitch" aria-label="Создать задачу"></button></div><div id="linkedTaskFields" hidden><div class="form-grid two" style="margin-top:12px"><div class="field"><label for="linkedDue">Срок</label><input type="datetime-local" id="linkedDue"></div><div class="field"><label for="linkedPriority">Приоритет</label><select id="linkedPriority">${optionsHtml(PRIORITIES,'Обычный')}</select></div></div></div></div>`:''}
+    ${!existing?`<div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Создать связанную задачу</strong><span>Напомнить о повторной проверке</span></div><button type="button" class="switch" id="linkedTaskSwitch" aria-label="Создать задачу"></button></div><div id="linkedTaskFields" hidden><div class="form-grid two nested-grid"><div class="field"><label for="linkedDue">Срок</label><input type="datetime-local" id="linkedDue"></div><div class="field"><label for="linkedPriority">Приоритет</label><select id="linkedPriority">${optionsHtml(PRIORITIES,'Обычный')}</select></div></div></div></div>`:''}
     ${existing?`<button type="button" class="button danger full" data-delete-entry="${esc(existing.id)}">${icon('trash')}Удалить запись</button>`:''}
   </form>`;
   const node = openModal(existing?'Редактировать запись':'Новое событие', body, { actionHtml:'<button class="text-button" id="saveEntry">Сохранить</button>' });
@@ -688,7 +690,7 @@ function openInspectionForm(existing = null) {
   const photos=[...(existing?.photos||[])];
   const values=existing?.items?.map(x=>({...x}))||INSPECTION_ITEMS.map(name=>({name,status:'skip'}));
   const checklist=()=>`<div class="checklist">${values.map((item,i)=>`<div class="check-row"><div class="check-label">${esc(item.name)}</div><div class="check-options">${[['good','Исправно'],['issue','Замечание'],['skip','Не проверено']].map(([v,l])=>`<button type="button" class="check-option ${item.status===v?`active ${v}`:''}" data-check-index="${i}" data-check-value="${v}">${l}</button>`).join('')}</div></div>`).join('')}</div>`;
-  const body=`<form id="inspectionForm"><div class="form-grid two"><div class="field"><label class="required" for="inspectionObject">Объект</label><select id="inspectionObject" required>${optionsHtml(OBJECTS,existing?.object||'КПП-1')}</select></div><div class="field"><label class="required" for="inspectionDate">Дата и время</label><input id="inspectionDate" type="datetime-local" required value="${localDateTimeValue(existing?.date?new Date(existing.date):new Date())}"></div></div><div class="field"><label class="required" for="inspectionEquipment">Оборудование</label><input id="inspectionEquipment" required value="${esc(existing?.equipment||'')}" placeholder="Например: турникеты №1–8"></div><div class="field"><label>Чек-лист</label><div id="inspectionChecklist">${checklist()}</div></div><div class="field"><label for="inspectionConclusion">Заключение и замечания</label><textarea id="inspectionConclusion" placeholder="Опишите обнаруженные недостатки и выполненные действия">${esc(existing?.conclusion||'')}</textarea></div><div class="field"><label>Фотографии</label><div id="inspectionPhotos">${photoPickerHtml(photos)}</div></div><div class="card" style="padding:13px;margin-bottom:15px"><div class="toggle-row"><div class="toggle-copy"><strong>Создать задачу по замечаниям</strong><span>Доступно, если есть замечания</span></div><button type="button" class="switch" id="inspectionTaskSwitch"></button></div></div>${existing?`<button type="button" class="button danger full" data-delete-inspection="${esc(existing.id)}">${icon('trash')}Удалить осмотр</button>`:''}</form>`;
+  const body=`<form id="inspectionForm"><div class="form-grid two"><div class="field"><label class="required" for="inspectionObject">Объект</label><select id="inspectionObject" required>${optionsHtml(OBJECTS,existing?.object||'КПП-1')}</select></div><div class="field"><label class="required" for="inspectionDate">Дата и время</label><input id="inspectionDate" type="datetime-local" required value="${localDateTimeValue(existing?.date?new Date(existing.date):new Date())}"></div></div><div class="field"><label class="required" for="inspectionEquipment">Оборудование</label><input id="inspectionEquipment" required value="${esc(existing?.equipment||'')}" placeholder="Например: турникеты №1–8"></div><div class="field"><label>Чек-лист</label><div id="inspectionChecklist">${checklist()}</div></div><div class="field"><label for="inspectionConclusion">Заключение и замечания</label><textarea id="inspectionConclusion" placeholder="Опишите обнаруженные недостатки и выполненные действия">${esc(existing?.conclusion||'')}</textarea></div><div class="field"><label>Фотографии</label><div id="inspectionPhotos">${photoPickerHtml(photos)}</div></div><div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Создать задачу по замечаниям</strong><span>Доступно, если есть замечания</span></div><button type="button" class="switch" id="inspectionTaskSwitch"></button></div></div>${existing?`<button type="button" class="button danger full" data-delete-inspection="${esc(existing.id)}">${icon('trash')}Удалить осмотр</button>`:''}</form>`;
   const node=openModal(existing?'Редактировать осмотр':'Новый техосмотр',body,{actionHtml:'<button class="text-button" id="saveInspection">Сохранить</button>'});
   const bindChecks=()=>node.querySelectorAll('[data-check-index]').forEach(btn=>btn.addEventListener('click',()=>{values[Number(btn.dataset.checkIndex)].status=btn.dataset.checkValue;node.querySelector('#inspectionChecklist').innerHTML=checklist();bindChecks();}));bindChecks();
   const renderPhotos=()=>{node.querySelector('#inspectionPhotos').innerHTML=photoPickerHtml(photos);node.querySelector('#photoInput')?.addEventListener('change',e=>handlePhotoFiles(e.target.files,photos,renderPhotos));node.querySelectorAll('[data-remove-photo]').forEach(b=>b.addEventListener('click',()=>{photos.splice(Number(b.dataset.removePhoto),1);renderPhotos();}));};renderPhotos();
@@ -762,7 +764,7 @@ async function removeSamples() {
 
 
 function openClearDataModal() {
-  const node = openModal('Удалить все данные', `<div class="warning-box" style="margin-bottom:14px">Будут безвозвратно удалены все записи, задачи, техосмотры, оборудование и фотографии.</div><div class="field"><label for="clearPhrase">Для подтверждения напишите УДАЛИТЬ</label><input id="clearPhrase" autocomplete="off" autocapitalize="characters" placeholder="УДАЛИТЬ"></div><button class="button danger full" id="clearEverything" disabled>${icon('trash')}Удалить всё</button>`);
+  const node = openModal('Удалить все данные', `<div class="warning-box spaced-bottom">Будут безвозвратно удалены все записи, задачи, техосмотры, оборудование и фотографии.</div><div class="field"><label for="clearPhrase">Для подтверждения напишите УДАЛИТЬ</label><input id="clearPhrase" autocomplete="off" autocapitalize="characters" placeholder="УДАЛИТЬ"></div><button class="button danger full" id="clearEverything" disabled>${icon('trash')}Удалить всё</button>`);
   const input = node.querySelector('#clearPhrase');
   const button = node.querySelector('#clearEverything');
   input.addEventListener('input', () => { button.disabled = input.value.trim().toUpperCase() !== 'УДАЛИТЬ'; });

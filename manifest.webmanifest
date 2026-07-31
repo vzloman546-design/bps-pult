@@ -4,7 +4,7 @@
   "short_name": "БПС",
   "description": "Локальный рабочий журнал инженера билетно-пропускной системы",
   "lang": "ru",
-  "start_url": "./?v=1.2.1#today",
+  "start_url": "./?v=1.3.0#today",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
