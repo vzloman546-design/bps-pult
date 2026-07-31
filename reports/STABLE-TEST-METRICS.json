@@ -1,12 +1,14 @@
 {
-  "version": "2.1.0",
-  "schemaVersion": 4,
-  "cache": "bps-pult-2.1.0",
+  "version": "2.5.0",
+  "schemaVersion": 5,
+  "cache": "bps-pult-2.5.0",
   "logicTests": {
-    "events": 9,
+    "events": 11,
     "knowledge": 14,
-    "stabilityGroups": 15,
-    "appContracts": 10,
+    "stabilityGroups": 16,
+    "appContracts": 18,
+    "draftAutosave": 2,
+    "productivityGroups": 4,
     "serviceWorker": "passed"
   },
   "syntaxChecks": [
@@ -16,12 +18,19 @@
     "event-ui.js",
     "knowledge-logic.js",
     "knowledge-ui.js",
+    "productivity-logic.js",
     "sw.js"
   ],
   "browserChecks": {
     "controlledUpdate": true,
     "offlineWithServerStopped": true,
     "legacySchema3PreviewAndMerge": true,
+    "legacySchema4Migration": true,
+    "draftRestoreAfterReload": true,
+    "duplicateEquipmentWarning": true,
+    "eventVerificationSnapshot": true,
+    "globalSearch": true,
+    "csvAndPrintReport": true,
     "integrityAfterRelatedDelete": {
       "errors": 0,
       "warnings": 0
@@ -31,5 +40,5 @@
     "modalTransitionPreserved": true,
     "focusPreservedAfterRerender": true
   },
-  "generatedAt": "2026-07-31T12:25:29+03:00"
+  "generatedAt": "2026-07-31T13:28:43+03:00"
 }

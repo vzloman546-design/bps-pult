@@ -26,10 +26,10 @@
     html,body{margin:0;background:#f4f4f2}
     html[data-theme="dark"],html[data-theme="dark"] body{background:#0e100f}
   </style>
-  <link rel="manifest" href="./manifest.webmanifest?v=2.1.0" />
-  <link rel="icon" href="./icon.svg?v=2.1.0" type="image/svg+xml" />
-  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png?v=2.1.0" />
-  <link rel="stylesheet" href="./styles.css?v=2.1.0" />
+  <link rel="manifest" href="./manifest.webmanifest?v=2.5.0" />
+  <link rel="icon" href="./icon.svg?v=2.5.0" type="image/svg+xml" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png?v=2.5.0" />
+  <link rel="stylesheet" href="./styles.css?v=2.5.0" />
   <title>БПС Пульт</title>
 </head>
 <body>
@@ -42,7 +42,10 @@
         <div class="eyebrow">БПС ПУЛЬТ</div>
         <h1 id="pageTitle">Сегодня</h1>
       </div>
-      <button class="icon-button" id="themeQuickBtn" aria-label="Переключить тему" title="Тема"></button>
+      <div class="header-actions">
+        <button class="icon-button" id="globalSearchBtn" aria-label="Открыть глобальный поиск" title="Поиск"><span data-icon="search"></span></button>
+        <button class="icon-button" id="themeQuickBtn" aria-label="Переключить тему" title="Тема"></button>
+      </div>
     </header>
 
     <main id="appMain" class="app-main" tabindex="-1"></main>
@@ -51,7 +54,7 @@
   <nav class="bottom-nav" aria-label="Основная навигация">
     <button class="nav-button active" data-route="today" aria-label="Сегодня"><span class="nav-icon" data-icon="home"></span><span>Сегодня</span></button>
     <button class="nav-button" data-route="journal" aria-label="Журнал"><span class="nav-icon" data-icon="journal"></span><span>Журнал</span></button>
-    <button class="record-button" id="recordButton" aria-label="Записать событие"><span class="record-icon" data-icon="plus"></span><span>Записать</span></button>
+    <button class="record-button" id="recordButton" aria-label="Быстро создать"><span class="record-icon" data-icon="plus"></span><span>Создать</span></button>
     <button class="nav-button" data-route="inspections" aria-label="Техосмотры"><span class="nav-icon" data-icon="inspection"></span><span>Осмотры</span></button>
     <button class="nav-button" data-route="more" aria-label="Ещё"><span class="nav-icon" data-icon="more"></span><span>Ещё</span></button>
   </nav>
@@ -73,11 +76,12 @@
     </div>
   </template>
 
-  <script src="./stability-logic.js?v=2.1.0" defer></script>
-  <script src="./event-logic.js?v=2.1.0" defer></script>
-  <script src="./knowledge-logic.js?v=2.1.0" defer></script>
-  <script src="./app.js?v=2.1.0" defer></script>
-  <script src="./event-ui.js?v=2.1.0" defer></script>
-  <script src="./knowledge-ui.js?v=2.1.0" defer></script>
+  <script src="./stability-logic.js?v=2.5.0" defer></script>
+  <script src="./event-logic.js?v=2.5.0" defer></script>
+  <script src="./knowledge-logic.js?v=2.5.0" defer></script>
+  <script src="./productivity-logic.js?v=2.5.0" defer></script>
+  <script src="./app.js?v=2.5.0" defer></script>
+  <script src="./event-ui.js?v=2.5.0" defer></script>
+  <script src="./knowledge-ui.js?v=2.5.0" defer></script>
 </body>
 </html>

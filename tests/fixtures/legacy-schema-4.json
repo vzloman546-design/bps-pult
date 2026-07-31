@@ -1,0 +1,37 @@
+{
+  "app": "БПС Пульт",
+  "version": "2.1.0-test",
+  "schemaVersion": 4,
+  "exportedAt": "2026-07-31T09:00:00.000Z",
+  "data": {
+    "entries": [],
+    "tasks": [],
+    "inspections": [],
+    "equipment": [
+      {
+        "id": "q1",
+        "name": "Турникет",
+        "location": "Правая линия",
+        "favorite": true
+      }
+    ],
+    "events": [
+      {
+        "id": "v1",
+        "name": "Матч",
+        "date": "2026-08-01T16:00:00.000Z",
+        "readinessHistory": [
+          {
+            "id": "r1",
+            "at": "2026-07-31T08:00:00.000Z",
+            "percent": 80
+          }
+        ],
+        "verifiedBy": "Артём"
+      }
+    ],
+    "knowledgeArticles": [],
+    "knowledgeCategories": [],
+    "settings": []
+  }
+}

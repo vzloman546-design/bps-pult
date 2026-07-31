@@ -5,7 +5,7 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.BpsStability = api;
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const CURRENT_SCHEMA = 4;
+  const CURRENT_SCHEMA = 5;
   const DATA_STORES = ['entries', 'tasks', 'inspections', 'equipment', 'events', 'knowledgeArticles', 'knowledgeCategories', 'settings'];
   const BACKUP_FORMAT = 2;
   const APP_NAME = 'БПС Пульт';
@@ -90,11 +90,13 @@
       name: text(item.name) || 'Оборудование',
       type: text(item.type),
       object: text(item.object),
+      location: text(item.location),
       designation: text(item.designation),
       status: text(item.status) || 'Работает',
       ip: text(item.ip),
       serial: text(item.serial),
       note: text(item.note),
+      favorite: Boolean(item.favorite),
       createdAt, updatedAt,
     };
     if (store === 'events') {
@@ -112,6 +114,9 @@
         gates: array(item.gates),
         cashDesks: array(item.cashDesks),
         checklist: array(item.checklist),
+        verifiedAt: nullableIso(item.verifiedAt),
+        verifiedBy: text(item.verifiedBy),
+        readinessHistory: array(item.readinessHistory).slice(-20),
         createdAt, updatedAt,
       };
       return typeof window !== 'undefined' && window.BpsEventLogic?.normalizeEvent

@@ -1,8 +1,8 @@
-// Релиз 2.1.0: активная версия обслуживает только собственный проверенный кэш оболочки.
-const VERSION = '2.1.0';
+// Релиз 2.5.0: активная версия обслуживает только собственный проверенный кэш оболочки.
+const VERSION = '2.5.0';
 const CACHE = `bps-pult-${VERSION}`;
 const APP_SHELL = [
-  './', './index.html', './styles.css', './stability-logic.js', './event-logic.js', './knowledge-logic.js',
+  './', './index.html', './styles.css', './stability-logic.js', './event-logic.js', './knowledge-logic.js', './productivity-logic.js',
   './app.js', './event-ui.js', './knowledge-ui.js', './manifest.webmanifest', './icon.svg',
   './icon-192.png', './icon-512.png', './apple-touch-icon.png'
 ];

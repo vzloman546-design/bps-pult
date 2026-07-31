@@ -1,5 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const S = require('../stability-logic.js');
 
 const baseData = Object.fromEntries(S.DATA_STORES.map(store => [store, []]));
@@ -10,7 +12,7 @@ baseData.settings = [{ key:'theme', value:'dark' }];
   const old = { app:'БПС Пульт', version:'1.0', schemaVersion:1, data:{ entries:baseData.entries } };
   const result = S.validatePayload(old);
   assert.equal(result.valid, true);
-  assert.equal(result.payload.schemaVersion, 4);
+  assert.equal(result.payload.schemaVersion, 5);
   assert.equal(result.payload.data.entries[0].id, 'e1');
   assert.equal(result.payload.data.settings.some(item => item.key === 'dataSchemaVersion'), true);
 }
@@ -49,7 +51,7 @@ baseData.settings = [{ key:'theme', value:'dark' }];
 }
 
 {
-  const duplicate = { app:'БПС Пульт', schemaVersion:4, data:structuredClone(baseData) };
+  const duplicate = { app:'БПС Пульт', schemaVersion:5, data:structuredClone(baseData) };
   duplicate.data.entries.push(structuredClone(duplicate.data.entries[0]));
   const result = S.validatePayload(duplicate);
   assert.equal(result.valid, false);
@@ -58,7 +60,7 @@ baseData.settings = [{ key:'theme', value:'dark' }];
 
 
 {
-  for (const schemaVersion of [2, 3]) {
+  for (const schemaVersion of [2, 3, 4]) {
     const payload = {
       app:'БПС Пульт', version:`2.0-alpha-schema-${schemaVersion}`, schemaVersion,
       data:{
@@ -69,7 +71,7 @@ baseData.settings = [{ key:'theme', value:'dark' }];
     };
     const result=S.validatePayload(payload);
     assert.equal(result.valid,true);
-    assert.equal(result.payload.schemaVersion,4);
+    assert.equal(result.payload.schemaVersion,5);
     assert.equal(result.payload.data.events[0].id,'ev1');
     assert.equal(result.payload.data.knowledgeArticles[0].id,'kb1');
   }
@@ -77,14 +79,14 @@ baseData.settings = [{ key:'theme', value:'dark' }];
 
 
 {
-  const missing = { app:'БПС Пульт', schemaVersion:4, data:{ entries:[{description:'без id'}] } };
+  const missing = { app:'БПС Пульт', schemaVersion:5, data:{ entries:[{description:'без id'}] } };
   const result = S.validatePayload(missing);
   assert.equal(result.valid, false);
   assert.match(result.errors.join(' '), /отсутствует идентификатор/i);
 }
 
 {
-  const unsafe = { app:'БПС Пульт', schemaVersion:4, data:structuredClone(baseData) };
+  const unsafe = { app:'БПС Пульт', schemaVersion:5, data:structuredClone(baseData) };
   unsafe.data.entries[0].photos = ['data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='];
   const result = S.validatePayload(unsafe);
   assert.equal(result.valid, false);
@@ -93,7 +95,7 @@ baseData.settings = [{ key:'theme', value:'dark' }];
 }
 
 {
-  const payload = { app:'БПС Пульт', schemaVersion:4, data:structuredClone(baseData) };
+  const payload = { app:'БПС Пульт', schemaVersion:5, data:structuredClone(baseData) };
   payload.data.entries[0].date = 'не дата';
   payload.data.inspections = [{ id:'i1', object:'КПП-1', equipment:'Турникет', date:'2026-07-31T08:00:00Z', items:[{name:'Питание',status:'skip'}] }];
   payload.data.tasks = [{ id:'t1', title:'Проверить', linkedInspectionId:'i1' }];
@@ -150,7 +152,7 @@ baseData.settings = [{ key:'theme', value:'dark' }];
 
 {
   const encoder = new TextEncoder();
-  const payload = { app:'БПС Пульт', version:'2.1.0', schemaVersion:4, data:structuredClone(baseData) };
+  const payload = { app:'БПС Пульт', version:'2.5.0', schemaVersion:5, data:structuredClone(baseData) };
   payload.data.entries[0].photos = [{ attachment:'attachments/photo.jpg', mime:'image/svg+xml', size:3 }];
   const manifest = { app:'БПС Пульт', backupFormat:2, attachmentCount:1 };
   const archive = S.createZip([
@@ -161,4 +163,15 @@ baseData.settings = [{ key:'theme', value:'dark' }];
   assert.throws(() => S.readBackupArchive(archive), /тип изображения/i);
 }
 
-console.log('stability-logic: 15 групп сценариев пройдены');
+{
+  const payload = JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures','legacy-schema-4.json'),'utf8'));
+  const result = S.validatePayload(payload);
+  assert.equal(result.valid, true);
+  assert.equal(result.payload.schemaVersion, 5);
+  assert.equal(result.payload.data.equipment[0].favorite, true);
+  assert.equal(result.payload.data.equipment[0].location, 'Правая линия');
+  assert.equal(result.payload.data.events[0].verifiedBy, 'Артём');
+  assert.equal(result.payload.data.events[0].readinessHistory.length, 1);
+}
+
+console.log('stability-logic: 16 групп сценариев пройдены');

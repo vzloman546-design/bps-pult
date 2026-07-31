@@ -97,9 +97,10 @@ function knowledgeResultsHtml() {
     filters,
     { equipment: state.data.equipment, events: state.data.events }
   );
+  const hasActiveFilters = Boolean(filters.query || filters.categoryId || filters.favorite || filters.type !== 'all' || filters.status !== 'all');
   const context = filters.categoryId ? knowledgeCategoryName(filters.categoryId) : filters.favorite ? 'Избранное' : filters.query ? 'Результаты поиска' : filters.showAll ? 'Все материалы' : 'Последние материалы';
   return `<div class="section-head"><div><h2 class="section-title">${esc(context)}</h2><p class="section-subtitle">${articles.length} ${plural(articles.length, 'материал', 'материала', 'материалов')}</p></div>${filters.categoryId || filters.query || filters.favorite || filters.type !== 'all' || filters.status !== 'all' ? `<button class="text-button" data-kb-action="reset-filters">Сбросить</button>` : ''}</div>
-    ${articles.length ? `<div class="list-card">${articles.map(knowledgeArticleRow).join('')}</div>` : emptyState('search','Ничего не найдено','Измените запрос или фильтры.', `<button class="button primary" data-kb-action="new-article">${icon('plus')}Создать материал</button>`)}`;
+    ${articles.length ? `<div class="list-card">${articles.map(knowledgeArticleRow).join('')}</div>` : emptyState(hasActiveFilters ? 'search' : 'book',hasActiveFilters ? 'Ничего не найдено' : 'База знаний пока пуста',hasActiveFilters ? 'Измените запрос или очистите фильтры.' : 'Создайте первую инструкцию, памятку или решение неисправности.', `<button class="button primary" ${hasActiveFilters ? 'data-kb-action="reset-filters"' : 'data-kb-action="new-article"'}>${icon(hasActiveFilters ? 'close' : 'plus')}${hasActiveFilters ? 'Очистить фильтры' : 'Создать материал'}</button>`)}`;
 }
 
 function renderKnowledge() {
@@ -151,8 +152,9 @@ function categoryOptions(selectedId, excludedIds = new Set()) {
     .map(item => `<option value="${esc(item.id)}" ${item.id === selectedId ? 'selected' : ''}>${esc(knowledgeCategoryName(item.id))}</option>`).join('');
 }
 
-function openKnowledgeArticleForm(existing = null) {
+function openKnowledgeArticleForm(existing = null, restoredDraft = null) {
   const article = BpsKnowledgeLogic.normalizeArticle(existing || { type:'instruction', status:'current', favorite:false });
+  let steps = [...(restoredDraft?.data?.steps || article.steps)];
   const body = `<form id="knowledgeForm" class="knowledge-form">
     <section class="form-section"><h3>Карточка материала</h3>
       <div class="field"><label class="required" for="knowledgeTitle">Название</label><input id="knowledgeTitle" required value="${esc(article.title)}" placeholder="Например: Диагностика считывателя турникета"></div>
@@ -164,7 +166,7 @@ function openKnowledgeArticleForm(existing = null) {
       <div class="field"><label for="knowledgeSummary">Кратко</label><textarea id="knowledgeSummary" class="textarea-compact" placeholder="Что это за материал и какую задачу решает">${esc(article.summary)}</textarea></div>
       <div class="field"><label for="knowledgeApplies">Когда применяется</label><textarea id="knowledgeApplies" class="textarea-compact" placeholder="В какой ситуации открывать эту инструкцию">${esc(article.appliesWhen)}</textarea></div>
       <div class="field"><label for="knowledgePrerequisites">Что требуется</label><textarea id="knowledgePrerequisites" placeholder="Каждый пункт с новой строки">${esc(article.prerequisites.join('\n'))}</textarea><div class="field-help">Инструменты, доступы, тестовые билеты и предварительные условия.</div></div>
-      <div class="field"><label for="knowledgeSteps">Порядок работы</label><textarea id="knowledgeSteps" class="textarea-steps" placeholder="Каждый шаг с новой строки">${esc(article.steps.join('\n'))}</textarea></div>
+      <div class="field"><label>Порядок работы</label><div id="knowledgeStepsList" class="knowledge-step-editor"></div><button type="button" class="button small full" id="addKnowledgeStep">${icon('plus')}Добавить шаг</button><div class="field-help">Шаги можно перемещать вверх и вниз без переписывания текста.</div></div>
       <div class="field"><label for="knowledgeExpected">Ожидаемый результат</label><textarea id="knowledgeExpected" class="textarea-compact">${esc(article.expectedResult)}</textarea></div>
       <div class="field"><label for="knowledgeTroubleshooting">Если не получилось</label><textarea id="knowledgeTroubleshooting" placeholder="Диагностика, обходное решение и дальнейшие действия">${esc(article.troubleshooting)}</textarea></div>
       <div class="field"><label for="knowledgeNotes">Дополнительные сведения</label><textarea id="knowledgeNotes" placeholder="Команды, адреса, контакты и личный опыт">${esc(article.notes)}</textarea></div>
@@ -180,6 +182,38 @@ function openKnowledgeArticleForm(existing = null) {
   favorite.addEventListener('click', () => {
     favorite.classList.toggle('on');
     favorite.setAttribute('aria-checked', String(favorite.classList.contains('on')));
+  });
+  const stepList = node.querySelector('#knowledgeStepsList');
+  const syncSteps = () => {
+    steps = [...stepList.querySelectorAll('[data-knowledge-step]')].map(input=>input.value.trim()).filter(Boolean);
+  };
+  const renderSteps = () => {
+    stepList.innerHTML = steps.length ? steps.map((step,index)=>`<div class="knowledge-step-edit-row"><span class="step-number">${index+1}</span><textarea data-knowledge-step="${index}" aria-label="Шаг ${index+1}" placeholder="Действие">${esc(step)}</textarea><span class="step-reorder-actions"><button type="button" class="icon-button compact" data-step-up="${index}" ${index===0?'disabled':''} aria-label="Переместить шаг ${index+1} вверх">${icon('chevron')}</button><button type="button" class="icon-button compact step-down" data-step-down="${index}" ${index===steps.length-1?'disabled':''} aria-label="Переместить шаг ${index+1} вниз">${icon('chevron')}</button><button type="button" class="icon-button compact danger-ghost" data-step-remove="${index}" aria-label="Удалить шаг ${index+1}">${icon('trash')}</button></span></div>`).join('') : `<div class="quiet-state compact">${icon('info')}<span><strong>Шагов пока нет</strong><small>Добавьте первый шаг инструкции</small></span></div>`;
+    stepList.querySelectorAll('[data-knowledge-step]').forEach(input=>input.addEventListener('input',()=>{const index=Number(input.dataset.knowledgeStep);steps[index]=input.value;}));
+    stepList.querySelectorAll('[data-step-up]').forEach(button=>button.addEventListener('click',()=>{syncSteps();const index=Number(button.dataset.stepUp);[steps[index-1],steps[index]]=[steps[index],steps[index-1]];renderSteps();draftController?.schedule();}));
+    stepList.querySelectorAll('[data-step-down]').forEach(button=>button.addEventListener('click',()=>{syncSteps();const index=Number(button.dataset.stepDown);[steps[index+1],steps[index]]=[steps[index],steps[index+1]];renderSteps();draftController?.schedule();}));
+    stepList.querySelectorAll('[data-step-remove]').forEach(button=>button.addEventListener('click',()=>{syncSteps();steps.splice(Number(button.dataset.stepRemove),1);renderSteps();draftController?.schedule();}));
+  };
+  let draftController = null;
+  renderSteps();
+  node.querySelector('#addKnowledgeStep').addEventListener('click',()=>{syncSteps();steps.push('');renderSteps();const inputs=stepList.querySelectorAll('[data-knowledge-step]');inputs[inputs.length-1]?.focus();draftController?.schedule();});
+  draftController=attachDraftAutosave(node,{
+    type:'knowledge',entityId:existing?.id||'',restored:restoredDraft,formSelector:'#knowledgeForm',
+    snapshot:()=>{
+      syncSteps();
+      const checked=[...node.querySelectorAll('.knowledge-link-list input[type="checkbox"]:checked')];
+      return {
+        values:formValues(node.querySelector('#knowledgeForm')),
+        steps:[...steps],
+        linkedEquipmentIds:checked.filter(input=>state.data.equipment.some(item=>item.id===input.value)).map(input=>input.value),
+        linkedEventIds:checked.filter(input=>state.data.events.some(item=>item.id===input.value)).map(input=>input.value),
+      };
+    },
+    restore:data=>{
+      applyFormValues(node.querySelector('#knowledgeForm'),data.values);
+      node.querySelectorAll('.knowledge-link-list input[type="checkbox"]').forEach(input=>{input.checked=[...(data.linkedEquipmentIds||[]),...(data.linkedEventIds||[])].includes(input.value);});
+      steps=[...(data.steps||[])];renderSteps();
+    },
   });
   node.querySelector('#saveKnowledgeArticle').addEventListener('click', async () => {
     const form = node.querySelector('#knowledgeForm');
@@ -199,7 +233,7 @@ function openKnowledgeArticleForm(existing = null) {
       summary: node.querySelector('#knowledgeSummary').value,
       appliesWhen: node.querySelector('#knowledgeApplies').value,
       prerequisites: node.querySelector('#knowledgePrerequisites').value,
-      steps: node.querySelector('#knowledgeSteps').value,
+      steps: (syncSteps(), steps),
       expectedResult: node.querySelector('#knowledgeExpected').value,
       troubleshooting: node.querySelector('#knowledgeTroubleshooting').value,
       notes: node.querySelector('#knowledgeNotes').value,
@@ -212,9 +246,11 @@ function openKnowledgeArticleForm(existing = null) {
     if (!validation.valid) { toast(validation.errors[0]); return; }
     const saved = BpsKnowledgeLogic.mergeForSave(existing, validation.article, nowISO());
     await dbPut('knowledgeArticles', saved);
+    await draftController.clear();
     closeModal(); toast(existing ? 'Материал обновлён' : 'Материал сохранён'); await render();
   });
   node.querySelector('[data-kb-form-delete]')?.addEventListener('click', async () => {
+    await draftController.clear();
     closeModal({ immediate:true });
     await softDelete('knowledgeArticles', existing.id, 'Материал');
   });
@@ -231,12 +267,13 @@ async function openKnowledgeArticleDetail(id) {
   if (!article) return;
   article = { ...article, lastOpenedAt: nowISO() };
   await dbPut('knowledgeArticles', article);
+  rememberRecent('knowledgeArticles',article.id,article.title);
   const status = knowledgeEffectiveStatus(article);
   const equipment = state.data.equipment.filter(item => article.linkedEquipmentIds.includes(item.id));
   const events = state.data.events.filter(item => article.linkedEventIds.includes(item.id));
   const prerequisites = article.prerequisites.length ? `<ul class="knowledge-bullet-list">${article.prerequisites.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : '';
   const steps = article.steps.length ? `<ol class="knowledge-step-list">${article.steps.map(item => `<li><span>${esc(item)}</span></li>`).join('')}</ol>` : '';
-  const links = [...equipment.map(item => `<div class="knowledge-related-row">${icon('equipment')}<span><strong>${esc(item.name)}</strong><small>${esc([item.object,item.type].filter(Boolean).join(' · '))}</small></span></div>`), ...events.map(item => `<div class="knowledge-related-row">${icon('calendar')}<span><strong>${esc(item.name)}</strong><small>${formatDate(item.date,{day:'numeric',month:'long',year:'numeric'})}</small></span></div>`)].join('');
+  const links = [...equipment.map(item => `<button class="knowledge-related-row" data-related-action="equipment-detail" data-related-id="${esc(item.id)}">${icon('equipment')}<span><strong>${esc(item.name)}</strong><small>${esc([item.object,item.type].filter(Boolean).join(' · '))}</small></span>${icon('chevron')}</button>`), ...events.map(item => `<button class="knowledge-related-row" data-related-action="event-detail" data-related-id="${esc(item.id)}">${icon('calendar')}<span><strong>${esc(item.name)}</strong><small>${formatDate(item.date,{day:'numeric',month:'long',year:'numeric'})}</small></span>${icon('chevron')}</button>`)].join('');
   const node = openModal('База знаний', `<article class="knowledge-article-detail">
     <header class="knowledge-article-header">
       <div class="knowledge-article-badges"><span class="status-pill ${knowledgeStatusTone(status)}">${esc(knowledgeStatusLabel(status))}</span><span class="tag">${esc(knowledgeTypeLabel(article.type))}</span></div>
@@ -256,6 +293,8 @@ async function openKnowledgeArticleDetail(id) {
     <div class="knowledge-detail-actions">
       <button class="button" id="toggleKnowledgeFavorite">${icon(article.favorite ? 'star-filled' : 'star')}${article.favorite ? 'В избранном' : 'В избранное'}</button>
       <button class="button" id="markKnowledgeReviewed">${icon('refresh')}Подтвердить актуальность</button>
+      <button class="button" id="duplicateKnowledgeArticle">${icon('copy')}Дублировать</button>
+      <button class="button" id="printKnowledgeArticle">${icon('report')}Печать</button>
       ${article.versions.length ? `<button class="button" id="openKnowledgeHistory">${icon('history')}История · ${article.versions.length}</button>` : ''}
       <button class="button primary" id="editKnowledgeArticle">${icon('edit')}Редактировать</button>
     </div>
@@ -267,6 +306,12 @@ async function openKnowledgeArticleDetail(id) {
     article.lastReviewedAt = nowISO(); if (article.status === 'review') article.status = 'current'; article.updatedAt = nowISO(); await dbPut('knowledgeArticles', article); closeModal(); toast('Актуальность подтверждена'); await render();
   });
   node.querySelector('#editKnowledgeArticle').addEventListener('click', () => { closeModal({ immediate:true }); openKnowledgeArticleForm(article); });
+  node.querySelector('#duplicateKnowledgeArticle').addEventListener('click',async()=>{
+    const copy=BpsKnowledgeLogic.normalizeArticle({...article,id:uid('knowledge'),title:`${article.title} — копия`,favorite:false,versions:[],lastOpenedAt:null,createdAt:nowISO(),updatedAt:nowISO()});
+    await dbPut('knowledgeArticles',copy);closeModal({immediate:true});toast('Создана копия материала');await render();openKnowledgeArticleForm(copy);
+  });
+  node.querySelector('#printKnowledgeArticle').addEventListener('click',()=>{document.body.classList.add('printing-knowledge');window.print();setTimeout(()=>document.body.classList.remove('printing-knowledge'),500);});
+  node.querySelectorAll('[data-related-action]').forEach(button=>button.addEventListener('click',()=>{const action=button.dataset.relatedAction,targetId=button.dataset.relatedId;closeModal({immediate:true});handleAppAction(action,targetId);}));
   node.querySelector('#openKnowledgeHistory')?.addEventListener('click', () => { closeModal({ immediate:true }); openKnowledgeHistory(article); });
 }
 window.openKnowledgeArticleDetail = openKnowledgeArticleDetail;
@@ -333,8 +378,9 @@ function updateKnowledgeResults(root) {
 function bindKnowledgePageEvents(main) {
   if (state.route !== 'knowledge') return;
   const search = main.querySelector('#knowledgeSearch');
-  search?.addEventListener('input', debounce(() => {
+  search?.addEventListener('input', debounce(async () => {
     currentKnowledgeFilters().query = search.value;
+    await setSetting('filter:knowledge', currentKnowledgeFilters());
     updateKnowledgeResults(main);
   }, 140));
   main.addEventListener('click', async event => {
@@ -342,19 +388,19 @@ function bindKnowledgePageEvents(main) {
     if (!target) return;
     event.preventDefault();
     const filters = currentKnowledgeFilters();
-    if (target.dataset.kbType) { filters.type = target.dataset.kbType; await render(); return; }
-    if (target.dataset.kbStatus) { filters.status = filters.status === target.dataset.kbStatus ? 'all' : target.dataset.kbStatus; await render(); return; }
-    if (target.hasAttribute('data-kb-favorite')) { filters.favorite = !filters.favorite; await render(); return; }
+    if (target.dataset.kbType) { filters.type = target.dataset.kbType; await setSetting('filter:knowledge',filters); await render(); return; }
+    if (target.dataset.kbStatus) { filters.status = filters.status === target.dataset.kbStatus ? 'all' : target.dataset.kbStatus; await setSetting('filter:knowledge',filters); await render(); return; }
+    if (target.hasAttribute('data-kb-favorite')) { filters.favorite = !filters.favorite; await setSetting('filter:knowledge',filters); await render(); return; }
     const action = target.dataset.kbAction;
     const id = target.dataset.id;
     if (action === 'new-article') openKnowledgeArticleForm();
     else if (action === 'manage-categories') openKnowledgeCategoryManager();
     else if (action === 'open-article') openKnowledgeArticleDetail(id);
-    else if (action === 'select-category') { filters.categoryId = id; await render(); }
-    else if (action === 'show-all') { state.knowledge = { query:'', type:'all', status:'all', categoryId:null, favorite:false, showAll:true }; await render(); }
-    else if (action === 'show-favorites') { filters.favorite = true; filters.categoryId = null; filters.showAll = false; await render(); }
-    else if (action === 'show-review') { filters.status = 'review'; filters.categoryId = null; filters.showAll = false; await render(); }
-    else if (action === 'reset-filters') { state.knowledge = { query:'', type:'all', status:'all', categoryId:null, favorite:false, showAll:false }; await render(); }
+    else if (action === 'select-category') { filters.categoryId = id; await setSetting('filter:knowledge',filters); await render(); }
+    else if (action === 'show-all') { state.knowledge = { query:'', type:'all', status:'all', categoryId:null, favorite:false, showAll:true }; await setSetting('filter:knowledge',state.knowledge); await render(); }
+    else if (action === 'show-favorites') { filters.favorite = true; filters.categoryId = null; filters.showAll = false; await setSetting('filter:knowledge',filters); await render(); }
+    else if (action === 'show-review') { filters.status = 'review'; filters.categoryId = null; filters.showAll = false; await setSetting('filter:knowledge',filters); await render(); }
+    else if (action === 'reset-filters') { state.knowledge = { query:'', type:'all', status:'all', categoryId:null, favorite:false, showAll:false }; await setSetting('filter:knowledge',state.knowledge); await render(); }
   });
 }
 window.bindKnowledgePageEvents = bindKnowledgePageEvents;

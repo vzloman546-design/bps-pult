@@ -1,6 +1,6 @@
 {
-  "version": "2.1.0",
-  "generatedAt": "2026-07-31T12:25:29+03:00",
+  "version": "2.5.0",
+  "generatedAt": "2026-07-31T13:28:43+03:00",
   "browser": "in-app Chromium",
   "routeAudit": {
     "routes": [
@@ -12,13 +12,14 @@
       "knowledge",
       "equipment",
       "more",
+      "search",
       "report",
       "settings",
       "install"
     ],
     "viewports": [320, 375, 390, 430],
     "themes": ["light", "dark"],
-    "runs": 88,
+    "runs": 96,
     "contentOverflowFailures": 0,
     "unnamedInteractiveElements": 0,
     "effectiveTargetsBelow44": 0,
@@ -36,7 +37,8 @@
     "eventChecklist32Items": "passed",
     "sheetOverflowFailures": 0,
     "focusInside": true,
-    "backgroundInert": true
+    "backgroundInert": true,
+    "relatedBlocksWithoutSwipeActions": true
   },
   "touchTargets": {
     "switch": [52, 44],
@@ -52,5 +54,6 @@
     "darkPrimaryText": 7.03,
     "darkTertiaryOnBackground": 5.11
   },
+  "highContrastGeometry": "passed",
   "errors": []
 }

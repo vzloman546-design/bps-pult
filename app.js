@@ -1,11 +1,11 @@
 'use strict';
 
-const APP_VERSION = '2.1.0';
-const SCHEMA_VERSION = 4;
+const APP_VERSION = '2.5.0';
+const SCHEMA_VERSION = 5;
 const DB_NAME = 'bps-pult-local';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE_NAMES = [...BpsStability.DATA_STORES];
-const INTERNAL_STORE_NAMES = ['trash'];
+const INTERNAL_STORE_NAMES = ['trash', 'drafts'];
 
 const ENTRY_TYPES = [
   'Неисправность', 'Выполненная работа', 'Наблюдение', 'Обращение кассира',
@@ -25,11 +25,31 @@ const state = {
   route: 'today',
   journal: { query: '', type: 'Все типы', object: 'Все объекты', status: 'Все статусы', period: 'Все даты' },
   taskFilter: 'Открытые',
+  inspectionFilter: 'Все',
+  equipment: { query:'', status:'Все статусы', favorite:false },
+  events: { query:'', status:'Все статусы' },
+  globalSearch: { query:'', type:'all' },
+  report: {
+    from: dayKey(new Date()),
+    to: dayKey(new Date()),
+    sections: ['entries','completedTasks','overdueTasks','inspections','equipment','events'],
+  },
   knowledge: { query: '', type: 'all', status: 'all', categoryId: null, favorite: false, showAll: false },
+  preferences: { startupRoute:'last', operatorName:'Артём', highContrast:false },
+  recentItems: [],
   data: { entries: [], tasks: [], inspections: [], equipment: [], events: [], knowledgeArticles: [], knowledgeCategories: [] },
 };
 
-const interactionState = { modalClosing: false, modalCloseTimer: null, openSwipeRow: null, previousFocus: null, modalKeyHandler: null, updateRegistration: null };
+const interactionState = {
+  modalClosing: false,
+  modalCloseTimer: null,
+  openSwipeRow: null,
+  previousFocus: null,
+  modalKeyHandler: null,
+  updateRegistration: null,
+  dirtyDraftKeys: new Set(),
+  draftControllers: new Map(),
+};
 const runtimeErrors = [];
 const prefersReducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -186,6 +206,10 @@ function openDatabase() {
         const store = db.createObjectStore('trash', { keyPath: 'id' });
         store.createIndex('expiresAt', 'expiresAt');
       }
+      if (!db.objectStoreNames.contains('drafts')) {
+        const store = db.createObjectStore('drafts', { keyPath: 'id' });
+        store.createIndex('savedAt', 'savedAt');
+      }
     };
     request.onblocked = () => {
       window.dispatchEvent(new CustomEvent('bps-db-blocked'));
@@ -262,6 +286,192 @@ async function dbClear(store) { const result = await storeAction(store, 'readwri
 async function getSetting(key, fallback = null) { const v = await dbGet('settings', key); return v ? v.value : fallback; }
 async function setSetting(key, value) { await storeAction('settings', 'readwrite', s => s.put({ key, value })); }
 
+function formValues(form) {
+  const values = {};
+  form?.querySelectorAll('input[id],select[id],textarea[id]').forEach(input => {
+    if (input.type === 'file' || input.type === 'button' || input.type === 'submit') return;
+    values[input.id] = input.type === 'checkbox' || input.type === 'radio' ? input.checked : input.value;
+  });
+  form?.querySelectorAll('[role="switch"][id]').forEach(button => {
+    values[button.id] = button.getAttribute('aria-checked') === 'true';
+  });
+  return values;
+}
+
+function applyFormValues(form, values = {}) {
+  for (const [id, value] of Object.entries(values || {})) {
+    const input = form?.querySelector(`#${CSS.escape(id)}`);
+    if (!input) continue;
+    if (input.matches('[role="switch"]')) {
+      input.classList.toggle('on', Boolean(value));
+      input.setAttribute('aria-checked', String(Boolean(value)));
+    } else if (input.type === 'checkbox' || input.type === 'radio') {
+      input.checked = Boolean(value);
+    } else {
+      input.value = String(value ?? '');
+    }
+  }
+}
+
+function draftId(type, entityId = '') {
+  return `${type}:${entityId || 'new'}`;
+}
+
+async function deleteDraft(id) {
+  if (!id) return;
+  interactionState.draftControllers.get(id)?.cancel?.();
+  await storeAction('drafts', 'readwrite', store => store.delete(id));
+  interactionState.dirtyDraftKeys.delete(id);
+  interactionState.draftControllers.delete(id);
+}
+
+function attachDraftAutosave(node, options) {
+  const {
+    type,
+    entityId = '',
+    restored = null,
+    formSelector = 'form',
+    snapshot = null,
+    restore = null,
+  } = options;
+  const id = draftId(type, entityId);
+  const form = node.querySelector(formSelector);
+  if (restored?.data) {
+    if (restore) restore(restored.data);
+    else applyFormValues(form, restored.data.values);
+  }
+  const save = debounce(async () => {
+    try {
+      const data = snapshot ? snapshot() : { values:formValues(form) };
+      await storeAction('drafts', 'readwrite', store => store.put({
+        id,
+        type,
+        entityId: entityId || null,
+        route: state.route,
+        savedAt: nowISO(),
+        data,
+      }));
+      interactionState.dirtyDraftKeys.add(id);
+    } catch (error) {
+      rememberRuntimeError(error, 'draft-save');
+      toast('Не удалось сохранить черновик');
+    }
+  }, 350);
+  const schedule = event => {
+    if (event?.target?.closest?.('[data-no-draft]')) return;
+    save();
+  };
+  form?.addEventListener('input', schedule);
+  form?.addEventListener('change', schedule);
+  form?.addEventListener('click', event => {
+    if (event.target.closest('button[type="button"],[role="switch"]')) schedule(event);
+  });
+  const controller = {
+    id,
+    save,
+    schedule,
+    cancel: () => save.cancel?.(),
+    clear: () => deleteDraft(id),
+  };
+  interactionState.draftControllers.set(id, controller);
+  if (restored) interactionState.dirtyDraftKeys.add(id);
+  return controller;
+}
+
+async function cleanupDrafts() {
+  const drafts = await dbGetAll('drafts');
+  const cutoff = Date.now() - 30 * 86400000;
+  for (const draft of drafts) {
+    if (new Date(draft.savedAt || 0).getTime() < cutoff) await deleteDraft(draft.id);
+  }
+}
+
+async function restoreLatestDraft() {
+  const drafts = (await dbGetAll('drafts')).sort((a,b) => new Date(b.savedAt || 0) - new Date(a.savedAt || 0));
+  const draft = drafts[0];
+  if (!draft) return false;
+  const existingByType = {
+    entry: () => state.data.entries.find(item => item.id === draft.entityId),
+    task: () => state.data.tasks.find(item => item.id === draft.entityId),
+    inspection: () => state.data.inspections.find(item => item.id === draft.entityId),
+    equipment: () => state.data.equipment.find(item => item.id === draft.entityId),
+    event: () => state.data.events.find(item => item.id === draft.entityId),
+    knowledge: () => state.data.knowledgeArticles.find(item => item.id === draft.entityId),
+  };
+  const existing = existingByType[draft.type]?.() || null;
+  if (draft.entityId && !existing) {
+    await deleteDraft(draft.id);
+    return false;
+  }
+  if (draft.type === 'entry') openEntryForm(existing, draft);
+  else if (draft.type === 'task') openTaskForm(existing, draft);
+  else if (draft.type === 'inspection') openInspectionForm(existing, draft);
+  else if (draft.type === 'equipment') openEquipmentForm(existing, draft);
+  else if (draft.type === 'event') openEventEditor(draft.data?.event || BpsEventLogic.normalizeEvent(existing || {}), Boolean(existing), draft);
+  else if (draft.type === 'knowledge') openKnowledgeArticleForm(existing, draft);
+  else return false;
+  toast(`Восстановлен черновик от ${formatDateTime(draft.savedAt)}`, { duration:5000 });
+  return true;
+}
+
+async function loadUiPreferences() {
+  const stored = await getSetting('uiPreferences', {});
+  state.preferences = {
+    startupRoute: stored?.startupRoute || 'last',
+    operatorName: stored?.operatorName || 'Артём',
+    highContrast: Boolean(stored?.highContrast),
+  };
+  state.recentItems = await getSetting('recentItems', []);
+  state.taskFilter = await getSetting('filter:tasks', 'Открытые');
+  state.inspectionFilter = await getSetting('filter:inspections', 'Все');
+  state.equipment = { ...state.equipment, ...(await getSetting('filter:equipment', {})) };
+  state.events = { ...state.events, ...(await getSetting('filter:events', {})) };
+  state.journal = { ...state.journal, ...(await getSetting('filter:journal', {})) };
+  state.knowledge = { ...state.knowledge, ...(await getSetting('filter:knowledge', {})) };
+  document.documentElement.dataset.contrast = state.preferences.highContrast ? 'high' : 'normal';
+}
+
+async function saveUiPreferences() {
+  await setSetting('uiPreferences', state.preferences);
+}
+
+async function rememberRecent(store, id, title) {
+  const item = { store, id, title, openedAt:nowISO() };
+  state.recentItems = [item, ...state.recentItems.filter(entry => !(entry.store === store && entry.id === id))].slice(0, 12);
+  await setSetting('recentItems', state.recentItems);
+}
+
+function recentItemRow(item) {
+  const meta = BpsProductivity.TYPE_META[item.store];
+  if (!meta) return '';
+  return listRow({
+    id:item.id,
+    action:meta.action,
+    iconName:meta.icon,
+    title:item.title,
+    meta:`${meta.label} · ${formatDateTime(item.openedAt)}`,
+  });
+}
+
+function relatedEntitiesHtml(store, id) {
+  const related = BpsProductivity.relatedEntities(state.data, store, id);
+  if (!related.length) return '';
+  return `<section class="modal-section related-section"><h3 class="modal-section-title">Связано с</h3><div class="list-card">${related.slice(0,8).map(item => `<button class="list-row" data-action="${esc(item.action)}" data-id="${esc(item.id)}">
+    <span class="row-icon">${icon(item.icon)}</span>
+    <span class="list-row-main"><span class="list-row-title">${esc(item.title)}</span><span class="list-row-meta">${esc(`${item.relationship}${item.meta ? ` · ${item.meta}` : ''}`)}</span></span>
+    <span class="list-row-chevron">${icon('chevron')}</span>
+  </button>`).join('')}</div></section>`;
+}
+
+function bindRelatedEntityLinks(root) {
+  root.querySelectorAll('.related-section [data-action]').forEach(button => button.addEventListener('click', event => {
+    event.stopPropagation();
+    const { action, id } = button.dataset;
+    closeModal({ immediate:true });
+    handleAppAction(action, id);
+  }));
+}
+
 async function getAllData() {
   const result = {};
   const rows = await Promise.all(STORE_NAMES.map(dbGetAll));
@@ -270,20 +480,23 @@ async function getAllData() {
 }
 
 async function atomicReplaceData(data, { clearTrash = true, settings = [] } = {}) {
-  const names = clearTrash ? [...STORE_NAMES, 'trash'] : STORE_NAMES;
+  const names = clearTrash ? [...STORE_NAMES, ...INTERNAL_STORE_NAMES] : STORE_NAMES;
   await runTransaction(names, 'readwrite', stores => {
     for (const store of STORE_NAMES) {
       stores[store].clear();
       for (const item of data[store] || []) stores[store].put(item);
     }
     for (const setting of settings) stores.settings.put(setting);
-    if (clearTrash) stores.trash.clear();
+    if (clearTrash) {
+      stores.trash.clear();
+      stores.drafts.clear();
+    }
   });
   noteDataChange('import');
 }
 
 async function atomicMergeData(importedData, { settings = [] } = {}) {
-  await runTransaction(STORE_NAMES, 'readwrite', (stores, tx, setResult, abortWithError) => {
+  await runTransaction([...STORE_NAMES, 'drafts'], 'readwrite', (stores, tx, setResult, abortWithError) => {
     const current = {};
     let remaining = STORE_NAMES.length;
     const finish = () => {
@@ -295,6 +508,7 @@ async function atomicMergeData(importedData, { settings = [] } = {}) {
           for (const item of merged[store] || []) stores[store].put(item);
         }
         for (const setting of settings) stores.settings.put(setting);
+        stores.drafts.clear();
       } catch (error) {
         abortWithError(error);
       }
@@ -528,7 +742,8 @@ function updateOnlineStatus() {
 
 const routeTitles = {
   today: 'Сегодня', journal: 'Журнал', inspections: 'Техосмотры', more: 'Ещё',
-  tasks: 'Задачи', events: 'Мероприятия', knowledge: 'База знаний', equipment: 'Оборудование', report: 'Итоги дня', settings: 'Настройки', install: 'Как установить'
+  tasks: 'Задачи', events: 'Мероприятия', knowledge: 'База знаний', equipment: 'Оборудование',
+  search: 'Поиск', report: 'Отчёты', settings: 'Настройки', install: 'Как установить'
 };
 function go(route) {
   location.hash = route;
@@ -538,19 +753,21 @@ function currentRoute() {
   return routeTitles[value] ? value : 'today';
 }
 function updateNav() {
-  document.querySelectorAll('.nav-button').forEach(btn => btn.classList.toggle('active', btn.dataset.route === state.route || (btn.dataset.route === 'more' && ['tasks','events','knowledge','equipment','report','settings','install'].includes(state.route))));
+  document.querySelectorAll('.nav-button').forEach(btn => btn.classList.toggle('active', btn.dataset.route === state.route || (btn.dataset.route === 'more' && ['tasks','events','knowledge','equipment','search','report','settings','install'].includes(state.route))));
 }
 
 async function render() {
   const previousRoute = state.route;
   state.route = currentRoute();
   await refreshData();
+  if (previousRoute !== state.route) await setSetting('lastRoute', state.route);
   document.getElementById('pageTitle').textContent = routeTitles[state.route];
   updateNav();
   const main = document.getElementById('appMain');
   const pages = {
     today: renderToday, journal: renderJournal, inspections: renderInspections, more: renderMore,
-    tasks: renderTasks, events: renderEvents, knowledge: renderKnowledge, equipment: renderEquipment, report: renderReport, settings: renderSettings, install: renderInstall
+    tasks: renderTasks, events: renderEvents, knowledge: renderKnowledge, equipment: renderEquipment,
+    search: renderGlobalSearch, report: renderReport, settings: renderSettings, install: renderInstall
   };
   const update = async () => {
     main.classList.remove('page-ready');
@@ -604,6 +821,9 @@ async function renderToday() {
   const attention = [...overdue.map(t => ({ kind:'task', ...t })), ...unresolved.slice(0,4).map(e => ({ kind:'entry', ...e }))].slice(0,5);
   const nearest = open.slice().sort((a,b) => (a.dueAt ? new Date(a.dueAt) : Infinity) - (b.dueAt ? new Date(b.dueAt) : Infinity)).slice(0,5);
   const recentToday = todayEntries.slice(0,4);
+  const recentObjects = state.recentItems
+    .filter(item => state.data[item.store]?.some(record => record.id === item.id))
+    .slice(0,4);
   const hour = new Date().getHours();
   const greeting = hour < 6 ? 'Доброй ночи' : hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер';
   const todayLabel = formatDate(new Date(), { weekday:'long', day:'numeric', month:'long' });
@@ -623,6 +843,14 @@ async function renderToday() {
     ${install}
     ${backupNotice}
     ${renderNextEventSection()}
+    <section class="section quick-filter-section" aria-label="Быстрые фильтры">
+      <div class="filter-row">
+        <button class="chip" data-quick-filter="today">${icon('calendar')}Сегодня</button>
+        <button class="chip ${overdue.length?'has-count':''}" data-quick-filter="overdue">${icon('clock')}Просрочено${overdue.length?` <span>${overdue.length}</span>`:''}</button>
+        <button class="chip" data-quick-filter="without-result">${icon('inspection')}Без результата</button>
+        <button class="chip" data-quick-filter="attention">${icon('alert')}Требует внимания</button>
+      </div>
+    </section>
     <section class="section">
       <div class="status-strip" aria-label="Сводка">
         <button class="status-cell" data-route-link="tasks"><strong>${open.length}</strong><span>Задачи</span></button>
@@ -644,8 +872,9 @@ async function renderToday() {
     </section>
     <section class="section">
       <div class="section-head"><div><h2 class="section-title">Сегодня в журнале</h2></div><button class="text-button" data-route-link="journal">Все записи</button></div>
-      ${recentToday.length ? `<div class="list-card">${recentToday.map(entryRow).join('')}</div>` : `<div class="quiet-state">${icon('journal')}<span><strong>Записей ещё нет</strong><small>Нажмите «Записать» в нижней панели</small></span></div>`}
-    </section>`;
+      ${recentToday.length ? `<div class="list-card">${recentToday.map(entryRow).join('')}</div>` : `<div class="quiet-state">${icon('journal')}<span><strong>Записей ещё нет</strong><small>Нажмите «Создать» в нижней панели</small></span></div>`}
+    </section>
+    ${recentObjects.length ? `<section class="section"><div class="section-head"><div><h2 class="section-title">Недавно открытые</h2></div></div><div class="list-card">${recentObjects.map(recentItemRow).join('')}</div></section>` : ''}`;
 }
 function plural(number, one, few, many) {
   const n = Math.abs(number) % 100, n1 = n % 10;
@@ -671,6 +900,13 @@ function filteredEntries() {
 }
 function renderJournal() {
   const entries = filteredEntries();
+  const activeFilterCount = [
+    state.journal.query,
+    state.journal.type !== 'Все типы',
+    state.journal.object !== 'Все объекты',
+    state.journal.status !== 'Все статусы',
+    state.journal.period !== 'Все даты',
+  ].filter(Boolean).length;
   const groups = Object.groupBy ? Object.groupBy(entries, e => dayKey(e.date)) : entries.reduce((acc,e)=>((acc[dayKey(e.date)] ||= []).push(e),acc),{});
   return `
     <section class="section filters">
@@ -681,6 +917,7 @@ function renderJournal() {
         <select id="journalStatus" aria-label="Статус">${optionsHtml(['Все статусы',...ENTRY_STATUSES],state.journal.status)}</select>
         <select id="journalPeriod" aria-label="Период">${optionsHtml(['Все даты','Сегодня','7 дней','30 дней'],state.journal.period)}</select>
       </div>
+      ${activeFilterCount ? `<div class="filter-summary"><span>${activeFilterCount} ${plural(activeFilterCount,'фильтр','фильтра','фильтров')}</span><button class="text-button" data-clear-filters="journal">Очистить фильтры</button></div>` : ''}
     </section>
     <section class="section">
       <div class="section-head"><div><h2 class="section-title">${entries.length} ${plural(entries.length,'запись','записи','записей')}</h2></div><button class="button primary small" data-action="new-entry">${icon('plus')}Добавить</button></div>
@@ -717,15 +954,24 @@ function renderTasks() {
     if (filter === 'Выполнено') return t.completed;
     return true;
   });
-  return `<section class="section"><div class="filter-row">${['Открытые','Сегодня','Просрочено','Без срока','Выполнено'].map(f=>`<button class="chip ${f===filter?'active':''}" data-task-filter="${f}">${f}</button>`).join('')}</div></section>
+  return `<section class="section"><div class="filter-row">${['Открытые','Сегодня','Просрочено','Без срока','Выполнено'].map(f=>`<button class="chip ${f===filter?'active':''}" data-task-filter="${f}">${f}</button>`).join('')}</div>${filter !== 'Открытые' ? `<div class="filter-summary"><span>1 фильтр</span><button class="text-button" data-clear-filters="tasks">Очистить фильтры</button></div>` : ''}</section>
     <section class="section"><div class="section-head"><div><h2 class="section-title">${tasks.length} ${plural(tasks.length,'задача','задачи','задач')}</h2></div><button class="button primary small" data-action="new-task">${icon('plus')}Добавить</button></div>
       ${tasks.length ? `<div class="list-card">${tasks.map(taskRow).join('')}</div>` : emptyState('task','Здесь пока пусто','Для выбранного фильтра задач нет.', '<button class="button primary small" data-action="new-task">Создать задачу</button>')}
     </section>`;
 }
 
 function renderInspections() {
-  const list = state.data.inspections;
+  const filter = state.inspectionFilter;
+  const list = state.data.inspections.filter(item => {
+    const checked = item.items?.some(row => ['good','issue'].includes(row.status));
+    const issues = item.items?.some(row => row.status === 'issue');
+    if (filter === 'Сегодня') return isToday(item.date);
+    if (filter === 'Без результата') return !checked;
+    if (filter === 'Требует внимания') return issues;
+    return true;
+  });
   return `<section class="page-lead"><p>Единый чек-лист для турникетов, касс и рабочих мест. Результаты сохраняются в локальной истории.</p><button class="button primary" data-action="new-inspection">${icon('inspection')}Начать осмотр</button></section>
+    <section class="section"><div class="filter-row">${['Все','Сегодня','Без результата','Требует внимания'].map(value => `<button class="chip ${filter===value?'active':''}" data-inspection-filter="${value}">${value}</button>`).join('')}</div>${filter!=='Все'?`<div class="filter-summary"><span>1 фильтр</span><button class="text-button" data-clear-filters="inspections">Очистить фильтры</button></div>`:''}</section>
     <section class="section"><div class="section-head"><div><h2 class="section-title">История осмотров</h2><p class="section-subtitle">${list.length} ${plural(list.length,'осмотр','осмотра','осмотров')}</p></div></div>
       ${list.length ? `<div class="list-card">${list.map(i => {
         const issues = i.items.filter(x=>x.status==='issue').length;
@@ -737,11 +983,12 @@ function renderInspections() {
 function renderMore() {
   const open = state.data.tasks.filter(t=>!t.completed).length;
   return `<section class="section"><div class="list-card">
+    ${listRow({id:'search',action:'route',iconName:'search',title:'Глобальный поиск',meta:'Журнал, задачи, осмотры, оборудование и инструкции'})}
     ${listRow({id:'events',action:'route',iconName:'calendar',title:'Мероприятия',meta:'Гибкая схема гейтов, турникетов, СИБ и касс',side:state.data.events.length?`${state.data.events.length}`:''})}
     ${listRow({id:'knowledge',action:'route',iconName:'book',title:'База знаний',meta:'Инструкции, решения, регламенты и личный опыт',side:state.data.knowledgeArticles.length?`${state.data.knowledgeArticles.length}`:''})}
     ${listRow({id:'tasks',action:'route',iconName:'task',title:'Задачи',meta:'Сроки, приоритеты и выполненные работы',side:open?`<span class="status-pill info">${open}</span>`:''})}
     ${listRow({id:'equipment',action:'route',iconName:'equipment',title:'Оборудование',meta:'Локальный реестр турникетов, касс и серверов',side:`${state.data.equipment.length}`})}
-    ${listRow({id:'report',action:'route',iconName:'report',title:'Итоги дня',meta:'Готовая хронология для отчёта'})}
+    ${listRow({id:'report',action:'route',iconName:'report',title:'Отчёты',meta:'Сводка за период, CSV и печать'})}
     ${listRow({id:'settings',action:'route',iconName:'settings',title:'Настройки и данные',meta:'Тема, резервная копия и хранилище'})}
     ${listRow({id:'install',action:'route',iconName:'install',title:'Как установить',meta:'Добавить приложение на экран «Домой»'})}
   </div></section>
@@ -749,48 +996,54 @@ function renderMore() {
 }
 
 function renderEquipment() {
-  const list = state.data.equipment;
-  return `<section class="section"><div class="section-head"><div><h2 class="section-title">${list.length} ${plural(list.length,'объект','объекта','объектов')}</h2><p class="section-subtitle">Локальный реестр оборудования</p></div><button class="button primary small" data-action="new-equipment">${icon('plus')}Добавить</button></div>
-    ${list.length ? `<div class="list-card">${list.map(e=>listRow({id:e.id,action:'equipment-detail',iconName:'equipment',tone:statusTone(e.status),title:e.name,meta:`${e.object || 'Без объекта'} · ${e.designation || e.type || 'Без обозначения'}`,side:`<span class="status-pill ${statusTone(e.status)}">${esc(e.status)}</span>`})).join('')}</div>` : emptyState('equipment','Реестр пуст','Добавьте турникеты, кассы, серверы и другое оборудование.', '<button class="button primary small" data-action="new-equipment">Добавить оборудование</button>')}
+  const filters = state.equipment;
+  const query = filters.query.trim().toLowerCase();
+  const list = state.data.equipment.filter(item => {
+    const hay = `${item.name} ${item.type} ${item.object} ${item.location} ${item.designation} ${item.ip} ${item.serial} ${item.status} ${item.note}`.toLowerCase();
+    if (query && !hay.includes(query)) return false;
+    if (filters.status !== 'Все статусы' && item.status !== filters.status) return false;
+    if (filters.favorite && !item.favorite) return false;
+    return true;
+  });
+  const activeFilterCount = [query, filters.status !== 'Все статусы', filters.favorite].filter(Boolean).length;
+  return `<section class="section filters"><div class="search-input-wrap">${icon('search')}<input id="equipmentSearch" type="search" aria-label="Поиск оборудования" placeholder="Название, IP, серийный номер, место" value="${esc(filters.query)}" autocomplete="off"></div><div class="filter-row"><button class="chip ${filters.favorite?'active':''}" data-equipment-favorite>${icon('star')}Избранное</button>${['Все статусы','Требует внимания','Не работает','Работает'].map(value=>`<button class="chip ${filters.status===value?'active':''}" data-equipment-status="${value}">${value}</button>`).join('')}</div>${activeFilterCount?`<div class="filter-summary"><span>${activeFilterCount} ${plural(activeFilterCount,'фильтр','фильтра','фильтров')}</span><button class="text-button" data-clear-filters="equipment">Очистить фильтры</button></div>`:''}</section>
+    <section class="section"><div class="section-head"><div><h2 class="section-title">${list.length} ${plural(list.length,'объект','объекта','объектов')}</h2><p class="section-subtitle">Локальный реестр оборудования</p></div><button class="button primary small" data-action="new-equipment">${icon('plus')}Добавить</button></div>
+    ${list.length ? `<div class="list-card">${list.map(e=>listRow({id:e.id,action:'equipment-detail',iconName:e.favorite?'star-filled':'equipment',tone:statusTone(e.status),title:e.name,meta:`${e.object || e.location || 'Без объекта'} · ${e.designation || e.type || 'Без обозначения'}`,side:`<span class="status-pill ${statusTone(e.status)}">${esc(e.status)}</span>`})).join('')}</div>` : emptyState('equipment','Ничего не найдено',activeFilterCount?'Очистите фильтры или измените запрос.':'Добавьте турникеты, кассы, серверы и другое оборудование.', `<button class="button primary small" ${activeFilterCount?'data-clear-filters="equipment"':'data-action="new-equipment"'}>${activeFilterCount?'Очистить фильтры':'Добавить оборудование'}</button>`)}
   </section>`;
 }
 
+function renderGlobalSearch() {
+  const filters = state.globalSearch;
+  const results = BpsProductivity.searchEntities(state.data, filters.query, filters.type);
+  return `<section class="section filters global-search-panel"><div class="search-input-wrap large">${icon('search')}<input id="globalSearchInput" type="search" aria-label="Глобальный поиск" placeholder="Что найти в БПС Пульте" value="${esc(filters.query)}" autocomplete="off" enterkeyhint="search"></div><div class="filter-row">${BpsProductivity.SEARCH_TYPES.map(item=>`<button class="chip ${filters.type===item.value?'active':''}" data-search-type="${item.value}">${esc(item.label)}</button>`).join('')}</div>${filters.query||filters.type!=='all'?`<div class="filter-summary"><span>${results.length} ${plural(results.length,'результат','результата','результатов')}</span><button class="text-button" data-clear-filters="search">Очистить фильтры</button></div>`:''}</section>
+    <section class="section">${filters.query.length < 2
+      ? emptyState('search','Поиск по всему приложению','Введите не меньше двух символов. Можно искать IP, серийный номер, название мероприятия или текст инструкции.')
+      : results.length
+        ? `<div class="list-card search-results">${results.slice(0,80).map(item=>listRow({id:item.id,action:item.action,iconName:item.icon,title:item.title,meta:`${item.typeLabel}${item.meta?` · ${item.meta}`:''}`,side:item.date?formatDate(item.date,{day:'numeric',month:'short'}):''})).join('')}</div>`
+        : emptyState('search','Ничего не найдено','Попробуйте другое слово или выберите поиск по всем разделам.','<button class="button small" data-clear-filters="search">Очистить поиск</button>')}
+    </section>`;
+}
+
 function buildDailyReport() {
-  const entries = state.data.entries.filter(e=>isToday(e.date)).sort((a,b)=>new Date(a.date)-new Date(b.date));
-  const completed = state.data.tasks.filter(t=>t.completed && t.completedAt && isToday(t.completedAt));
-  const inspections = state.data.inspections.filter(i=>isToday(i.date));
-  const lines = [`ИТОГИ РАБОЧЕГО ДНЯ — ${formatDate(new Date(),{day:'numeric',month:'long',year:'numeric'})}`, ''];
-  if (entries.length) {
-    lines.push('СОБЫТИЯ И ВЫПОЛНЕННЫЕ РАБОТЫ');
-    entries.forEach(e => lines.push(`• ${formatDate(e.date,{hour:'2-digit',minute:'2-digit'})} — ${e.object}${e.equipment?`, ${e.equipment}`:''}: ${e.description} (${e.status}).`));
-    lines.push('');
-  }
-  if (inspections.length) {
-    lines.push('ТЕХНИЧЕСКИЕ ОСМОТРЫ');
-    inspections.forEach(i => {
-      const issues = i.items.filter(x=>x.status==='issue').map(x=>x.name);
-      lines.push(`• ${i.object}${i.equipment?`, ${i.equipment}`:''}: ${issues.length ? `замечания — ${issues.join(', ')}` : 'нарушений не обнаружено'}.`);
-    });
-    lines.push('');
-  }
-  if (completed.length) {
-    lines.push('ВЫПОЛНЕННЫЕ ЗАДАЧИ');
-    completed.forEach(t => lines.push(`• ${t.title}${t.object?` (${t.object})`:''}.`));
-    lines.push('');
-  }
-  const unresolved = state.data.entries.filter(e=>isToday(e.date) && ['Не устранено','Повторная проверка','Ожидается ответ','Работает — наблюдать'].includes(e.status));
-  if (unresolved.length) {
-    lines.push('ОСТАЛОСЬ НА КОНТРОЛЕ');
-    unresolved.forEach(e=>lines.push(`• ${e.object}${e.equipment?`, ${e.equipment}`:''} — ${e.status}: ${e.description}.`));
-  }
-  if (!entries.length && !completed.length && !inspections.length) lines.push('За сегодняшний день записи отсутствуют.');
-  return lines.join('\n').replace(/\.{2,}/g,'.');
+  const report = BpsProductivity.reportData(state.data, state.report);
+  return BpsProductivity.formatReport(report, formatDateTime);
 }
 function renderReport() {
-  const text = buildDailyReport();
-  return `<section class="section"><div class="card notice-card"><div class="notice-icon accent">${icon('report')}</div><div><h3>Отчёт собран автоматически</h3><p>Используются сегодняшние записи, осмотры и завершённые задачи.</p></div></div></section>
-    <section class="section"><div class="report-box" id="reportText">${esc(text)}</div></section>
-    <section class="section"><div class="button-row"><button class="button" data-action="copy-report">${icon('copy')}Скопировать</button><button class="button primary" data-action="share-report">${icon('share')}Поделиться</button></div></section>`;
+  const report = BpsProductivity.reportData(state.data, state.report);
+  const text = BpsProductivity.formatReport(report, formatDateTime);
+  const sectionOptions = [
+    ['entries','Журнал'],
+    ['completedTasks','Выполненные задачи'],
+    ['overdueTasks','Просроченные задачи'],
+    ['inspections','Осмотры'],
+    ['equipment','Проблемное оборудование'],
+    ['events','Мероприятия'],
+  ];
+  const total = report.entries.length + report.completedTasks.length + report.overdueTasks.length + report.inspections.length + report.equipment.length + report.events.length;
+  return `<section class="section report-controls"><div class="card"><div class="form-grid two"><div class="field flush"><label for="reportFrom">С даты</label><input id="reportFrom" type="date" value="${esc(state.report.from)}"></div><div class="field flush"><label for="reportTo">По дату</label><input id="reportTo" type="date" value="${esc(state.report.to)}"></div></div><div class="quick-preset-row spaced-top"><button class="chip" data-report-period="today">Сегодня</button><button class="chip" data-report-period="week">7 дней</button></div><fieldset class="report-section-picker"><legend>Состав отчёта</legend>${sectionOptions.map(([value,label])=>`<label><input type="checkbox" data-report-section="${value}" ${state.report.sections.includes(value)?'checked':''}><span>${esc(label)}</span></label>`).join('')}</fieldset></div></section>
+    <section class="section"><div class="summary-strip report-summary"><div><b>${total}</b><span>Объектов</span></div><div><b>${report.overdueTasks.length}</b><span>Просрочено</span></div><div><b>${report.equipment.length}</b><span>Оборудование</span></div></div></section>
+    <section class="section"><div class="report-box" id="reportText">${esc(text)}</div><div id="printReport" class="print-report" aria-hidden="true"><pre>${esc(text)}</pre></div></section>
+    <section class="section"><div class="button-row wrap"><button class="button" data-action="copy-report">${icon('copy')}Копировать</button><button class="button" data-action="export-report-csv">${icon('download')}CSV</button><button class="button" data-action="print-report">${icon('report')}Печать</button><button class="button primary" data-action="share-report">${icon('share')}Поделиться</button></div></section>`;
 }
 
 async function storageInfo() {
@@ -810,6 +1063,16 @@ async function storageInfo() {
     try { result.persisted = await navigator.storage.persisted(); } catch (_) {}
   }
   return result;
+}
+async function ensureStorageCapacity(requiredBytes, purpose = 'данных') {
+  const storage = await storageInfo();
+  if (!storage.quota) return true;
+  const available = Math.max(0, storage.quota - storage.usage);
+  const reserve = Math.max(8 * 1024 * 1024, storage.quota * 0.03);
+  if (available - Number(requiredBytes || 0) < reserve) {
+    throw new Error(`Недостаточно места для ${purpose}. Доступно ${formatBytes(available)}, требуется не менее ${formatBytes(Number(requiredBytes || 0) + reserve)} с безопасным резервом. Создайте backup и удалите ненужные фотографии.`);
+  }
+  return true;
 }
 function formatBytes(bytes) {
   if (!bytes) return '0 Б';
@@ -849,7 +1112,8 @@ async function renderSettings() {
   const backupTone = backupDays === null || backupDays >= 14 ? 'danger' : backupDays >= 7 || changedAfterBackup ? 'warning' : 'success';
   const backupText = lastBackupAt ? `${formatFullDate(lastBackupAt)}${changedAfterBackup ? ' · есть новые изменения' : ''}` : 'Ещё не создавалась';
   const storageWarning = storage.warning ? `<div class="warning-box spaced-bottom">${esc(storage.warning)}</div>` : '';
-  return `<section class="section"><div class="section-head"><div><h2 class="section-title">Внешний вид</h2></div></div><div class="card"><div class="field flush"><label>Тема приложения</label><div class="segmented">${['system','light','dark'].map(t=>`<button class="segment-button ${t===theme?'active':''}" data-theme-choice="${t}">${{system:'Системная',light:'Светлая',dark:'Тёмная'}[t]}</button>`).join('')}</div></div></div></section>
+  return `<section class="section"><div class="section-head"><div><h2 class="section-title">Внешний вид</h2></div></div><div class="card"><div class="field flush"><label>Тема приложения</label><div class="segmented">${['system','light','dark'].map(t=>`<button class="segment-button ${t===theme?'active':''}" data-theme-choice="${t}">${{system:'Системная',light:'Светлая',dark:'Тёмная'}[t]}</button>`).join('')}</div></div><div class="toggle-row settings-toggle"><div class="toggle-copy"><strong>Повышенный контраст</strong><span>Для работы на улице и при ярком свете</span></div><button type="button" class="switch ${state.preferences.highContrast?'on':''}" id="highContrastSwitch" role="switch" aria-checked="${state.preferences.highContrast}" aria-label="Повышенный контраст"></button></div></div></section>
+    <section class="section"><div class="section-head"><div><h2 class="section-title">Рабочий профиль</h2></div></div><div class="card"><div class="field"><label for="operatorName">Имя в отметках проверки</label><input id="operatorName" value="${esc(state.preferences.operatorName)}" maxlength="80" placeholder="Например: Артём"></div><div class="field flush"><label for="startupRoute">Раздел при запуске</label><select id="startupRoute"><option value="last" ${state.preferences.startupRoute==='last'?'selected':''}>Продолжить с последнего</option>${Object.entries(routeTitles).filter(([route])=>!['install','settings'].includes(route)).map(([route,title])=>`<option value="${route}" ${state.preferences.startupRoute===route?'selected':''}>${esc(title)}</option>`).join('')}</select></div></div></section>
     <section class="section"><div class="section-head"><div><h2 class="section-title">Локальное хранилище</h2><p class="section-subtitle">Данные находятся только на этом устройстве</p></div></div>${storageWarning}<div class="card"><div class="data-stat"><span>Использовано</span><strong>${storage.text}</strong></div><div class="data-stat"><span>Защита хранения</span><strong class="status-text ${storage.persisted?'success':'warning'}">${storage.persisted?'Постоянное':'Не гарантировано'}</strong></div><div class="data-stat"><span>Корзина</span><strong>${trashCount} объектов</strong></div><div class="progress-bar progress-spaced"><div class="progress-fill" style="width:${storage.percent}%"></div></div>${!storage.persisted?`<button class="button full spaced-top" data-action="request-persistence">Запросить постоянное хранение</button>`:''}${trashCount?`<button class="button full spaced-top" data-action="empty-trash">Очистить корзину сейчас</button>`:''}</div></section>
     <section class="section"><div class="section-head"><div><h2 class="section-title">Резервная копия</h2><p class="section-subtitle">Проверяемый архив с отдельными вложениями</p></div></div><div class="card"><div class="data-stat"><span>Последняя копия</span><strong class="status-text ${backupTone}">${esc(backupText)}</strong></div><div class="data-stat"><span>Формат</span><strong>BPSBACKUP v2</strong></div></div><div class="button-row spaced"><button class="button" data-action="export-data">${icon('download')}Создать архив</button><label class="button primary file-button">${icon('upload')}Восстановить<input id="importInput" type="file" accept=".bpsbackup,.zip,.json,application/json,application/zip" hidden></label></div></section>
     <section class="section"><div class="section-head"><div><h2 class="section-title">Надёжность</h2></div></div><div class="list-card"><button class="list-row" data-action="check-integrity"><span class="row-icon">${icon('check')}</span><span class="list-row-main"><span class="list-row-title">Проверить целостность базы</span><span class="list-row-meta">Связи, идентификаторы, даты и конфигурации</span></span><span class="list-row-chevron">${icon('chevron')}</span></button><button class="list-row" data-action="download-diagnostic"><span class="row-icon">${icon('report')}</span><span class="list-row-main"><span class="list-row-title">Диагностический отчёт</span><span class="list-row-meta">Без текстов записей и рабочих данных</span></span><span class="list-row-chevron">${icon('download')}</span></button></div></section>
@@ -1020,7 +1284,9 @@ async function decodeImage(file) {
 async function compressImage(file) {
   const MAX_SOURCE = 12 * 1024 * 1024;
   const MAX_OUTPUT = 1400 * 1024;
-  if (!file.type.startsWith('image/')) throw new Error('Выбранный файл не является изображением.');
+  const extension = String(file.name || '').split('.').pop().toLowerCase();
+  const imageByExtension = ['jpg','jpeg','png','webp','gif','heic','heif'].includes(extension);
+  if (!file.type.startsWith('image/') && !imageByExtension) throw new Error('Выбранный файл не является поддерживаемым изображением.');
   if (file.size > MAX_SOURCE) throw new Error('Фотография больше 12 МБ. Уменьшите её перед добавлением.');
   const bitmap = await decodeImage(file);
   let maxSide = 1600;
@@ -1040,6 +1306,7 @@ async function compressImage(file) {
   }
   bitmap.close?.();
   if (!output || output.size > MAX_OUTPUT) throw new Error('Не удалось уменьшить фотографию до безопасного размера.');
+  await ensureStorageCapacity(output.size * 2, 'фотографии');
   return blobToDataUrl(output);
 }
 async function handlePhotoFiles(files, photos, rerender) {
@@ -1049,8 +1316,8 @@ async function handlePhotoFiles(files, photos, rerender) {
   rerender();
 }
 
-function openEntryForm(existing = null) {
-  const photos = [...(existing?.photos || [])];
+function openEntryForm(existing = null, restoredDraft = null) {
+  const photos = [...(restoredDraft?.data?.photos || existing?.photos || [])];
   const body = `<form id="entryForm">
     ${eventSelectField(existing?.eventId)}
     <div class="form-grid two"><div class="field"><label class="required" for="entryType">Тип</label><select id="entryType" required>${optionsHtml(ENTRY_TYPES,existing?.type||'Неисправность')}</select></div><div class="field"><label class="required" for="entryObject">Объект</label><select id="entryObject" required>${optionsHtml(OBJECTS,existing?.object||'КПП-1')}</select></div></div>
@@ -1064,12 +1331,25 @@ function openEntryForm(existing = null) {
   const node = openModal(existing?.id?'Редактировать запись':'Новая запись', body, { actionHtml:'<button class="text-button" id="saveEntry">Сохранить</button>' });
   const renderPhotos = () => {
     node.querySelector('#entryPhotos').innerHTML = photoPickerHtml(photos);
-    const input=node.querySelector('#photoInput'); if(input) input.addEventListener('change',e=>handlePhotoFiles(e.target.files,photos,renderPhotos));
-    node.querySelectorAll('[data-remove-photo]').forEach(b=>b.addEventListener('click',()=>{photos.splice(Number(b.dataset.removePhoto),1);renderPhotos();}));
+    const input=node.querySelector('#photoInput'); if(input) input.addEventListener('change',async e=>{await handlePhotoFiles(e.target.files,photos,renderPhotos);interactionState.draftControllers.get(draftId('entry',existing?.id||''))?.schedule();});
+    node.querySelectorAll('[data-remove-photo]').forEach(b=>b.addEventListener('click',()=>{photos.splice(Number(b.dataset.removePhoto),1);renderPhotos();interactionState.draftControllers.get(draftId('entry',existing?.id||''))?.schedule();}));
   };
   renderPhotos();
   const sw=node.querySelector('#linkedTaskSwitch');
   if(sw) sw.addEventListener('click',()=>{sw.classList.toggle('on');const enabled=sw.classList.contains('on');sw.setAttribute('aria-checked',String(enabled));node.querySelector('#linkedTaskFields').hidden=!enabled;});
+  const draftController=attachDraftAutosave(node,{
+    type:'entry',
+    entityId:existing?.id||'',
+    restored:restoredDraft,
+    formSelector:'#entryForm',
+    snapshot:()=>({values:formValues(node.querySelector('#entryForm')),photos:[...photos]}),
+    restore:data=>{
+      applyFormValues(node.querySelector('#entryForm'),data.values);
+      const enabled=node.querySelector('#linkedTaskSwitch')?.getAttribute('aria-checked')==='true';
+      if(node.querySelector('#linkedTaskFields'))node.querySelector('#linkedTaskFields').hidden=!enabled;
+      renderPhotos();
+    },
+  });
   node.querySelector('#saveEntry').addEventListener('click',async()=>{
     const form=node.querySelector('#entryForm'); if(!form.reportValidity()) return;
     const record={
@@ -1084,46 +1364,59 @@ function openEntryForm(existing = null) {
     }
     if (linkedTask) await putRecordsAtomically({ entries:record, tasks:linkedTask });
     else await dbPut('entries',record);
+    await draftController.clear();
     closeModal();toast(existing?.id?'Запись обновлена':'Запись сохранена');await render();
   });
-  node.querySelector('[data-delete-entry]')?.addEventListener('click',async()=>{closeModal({immediate:true});await deleteEntryWithUndo(existing.id);});
+  node.querySelector('[data-delete-entry]')?.addEventListener('click',async()=>{await draftController.clear();closeModal({immediate:true});await deleteEntryWithUndo(existing.id);});
 }
 
 function openEntryDetail(id) {
   const e=state.data.entries.find(x=>x.id===id); if(!e)return;
+  rememberRecent('entries',e.id,e.equipment||e.type);
   const photos=e.photos||[];
-  const node=openModal('Запись журнала',`<div class="detail-hero"><span class="status-pill ${statusTone(e.status)}">${esc(e.status)}</span><h3 class="detail-title">${esc(e.equipment||e.type)}</h3><div class="detail-meta">${esc(e.object)} · ${formatFullDate(e.date)}</div><div class="detail-grid"><div class="detail-field"><div class="detail-field-label">Тип</div><div class="detail-field-value">${esc(e.type)}</div></div><div class="detail-field"><div class="detail-field-label">Описание</div><div class="detail-field-value">${nl2br(e.description)}</div></div></div></div>${photos.length?`<div class="modal-section"><h3 class="modal-section-title">Фотографии</h3><div class="photo-gallery">${photos.map((p,index)=>`<img src="${esc(p)}" alt="Фото записи ${index+1}">`).join('')}</div></div>`:''}<div class="button-row"><button class="button" id="editEntry">${icon('edit')}Редактировать</button><button class="button" id="taskFromEntry">${icon('task')}Создать задачу</button></div>`);
+  const node=openModal('Запись журнала',`<div class="detail-hero"><span class="status-pill ${statusTone(e.status)}">${esc(e.status)}</span><h3 class="detail-title">${esc(e.equipment||e.type)}</h3><div class="detail-meta">${esc(e.object)} · ${formatFullDate(e.date)}</div><div class="detail-grid"><div class="detail-field"><div class="detail-field-label">Тип</div><div class="detail-field-value">${esc(e.type)}</div></div><div class="detail-field"><div class="detail-field-label">Описание</div><div class="detail-field-value">${nl2br(e.description)}</div></div></div></div>${photos.length?`<div class="modal-section"><h3 class="modal-section-title">Фотографии</h3><div class="photo-gallery">${photos.map((p,index)=>`<img src="${esc(p)}" alt="Фото записи ${index+1}">`).join('')}</div></div>`:''}${relatedEntitiesHtml('entries',e.id)}<div class="button-row"><button class="button" id="editEntry">${icon('edit')}Редактировать</button><button class="button" id="taskFromEntry">${icon('task')}Создать задачу</button></div>`);
   node.querySelector('#editEntry').addEventListener('click',()=>{closeModal();openEntryForm(e);});
   node.querySelector('#taskFromEntry').addEventListener('click',()=>{closeModal();openTaskForm({object:e.object,description:e.description,eventId:e.eventId||null,linkedEntryId:e.id,title:`${e.equipment||e.type}: ${e.status}`});});
+  bindRelatedEntityLinks(node);
 }
 
-function openTaskForm(existing = null) {
+function openTaskForm(existing = null, restoredDraft = null) {
   const preset=existing||{};
   const body=`<form id="taskForm">${eventSelectField(preset.eventId)}<div class="field"><label class="required" for="taskTitle">Название</label><input id="taskTitle" required value="${esc(preset.title||'')}" placeholder="Что нужно сделать"></div><div class="form-grid two"><div class="field"><label for="taskObject">Объект</label><select id="taskObject"><option value="">Без объекта</option>${optionsHtml(OBJECTS,preset.object||'')}</select></div><div class="field"><label for="taskPriority">Приоритет</label><select id="taskPriority">${optionsHtml(PRIORITIES,preset.priority||'Обычный')}</select></div></div><div class="field"><label for="taskDue">Срок</label><input id="taskDue" type="datetime-local" value="${preset.dueAt?localDateTimeValue(new Date(preset.dueAt)):''}"></div><div class="field"><label for="taskDescription">Подробности</label><textarea id="taskDescription" placeholder="Дополнительная информация">${esc(preset.description||'')}</textarea></div>${preset.id?`<button type="button" class="button danger full" data-delete-task="${esc(preset.id)}">${icon('trash')}Удалить задачу</button>`:''}</form>`;
   const node=openModal(preset.id?'Редактировать задачу':'Новая задача',body,{actionHtml:'<button class="text-button" id="saveTask">Сохранить</button>'});
+  const draftController=attachDraftAutosave(node,{type:'task',entityId:preset.id||'',restored:restoredDraft,formSelector:'#taskForm'});
   node.querySelector('#saveTask').addEventListener('click',async()=>{
     const form=node.querySelector('#taskForm');if(!form.reportValidity())return;
     await dbPut('tasks',{id:preset.id||uid('task'),title:node.querySelector('#taskTitle').value.trim(),object:node.querySelector('#taskObject').value,priority:node.querySelector('#taskPriority').value,dueAt:node.querySelector('#taskDue').value?new Date(node.querySelector('#taskDue').value).toISOString():null,description:node.querySelector('#taskDescription').value.trim(),completed:preset.completed||false,completedAt:preset.completedAt||null,eventId:node.querySelector('#linkedEvent')?.value||null,linkedEntryId:preset.linkedEntryId||null,linkedInspectionId:preset.linkedInspectionId||null,createdAt:preset.createdAt||nowISO(),updatedAt:nowISO(),sample:preset.sample||false});
+    await draftController.clear();
     closeModal();toast(preset.id?'Задача обновлена':'Задача создана');await render();
   });
-  node.querySelector('[data-delete-task]')?.addEventListener('click',async()=>{closeModal({immediate:true});await softDelete('tasks',preset.id,'Задача');});
+  node.querySelector('[data-delete-task]')?.addEventListener('click',async()=>{await draftController.clear();closeModal({immediate:true});await softDelete('tasks',preset.id,'Задача');});
 }
 function openTaskDetail(id) {
   const t=state.data.tasks.find(x=>x.id===id);if(!t)return;
-  const node=openModal('Задача',`<div class="detail-hero"><span class="status-pill ${t.completed?'success':isOverdue(t)?'danger':statusTone(t.priority)}">${t.completed?'Выполнена':isOverdue(t)?'Просрочено':esc(t.priority)}</span><h3 class="detail-title">${esc(t.title)}</h3><div class="detail-meta">${esc(t.object||'Без объекта')} · ${t.dueAt?formatFullDate(t.dueAt):'Без срока'}</div><div class="detail-grid">${t.description?`<div class="detail-field"><div class="detail-field-label">Подробности</div><div class="detail-field-value">${nl2br(t.description)}</div></div>`:''}</div></div><div class="button-row"><button class="button primary" id="toggleTaskDetail">${icon(t.completed?'clock':'check')}${t.completed?'Вернуть в работу':'Выполнить'}</button><button class="button" id="editTask">${icon('edit')}Изменить</button></div>`);
-  node.querySelector('#toggleTaskDetail').addEventListener('click',async()=>{t.completed=!t.completed;t.completedAt=t.completed?nowISO():null;t.updatedAt=nowISO();await dbPut('tasks',t);closeModal();toast(t.completed?'Задача выполнена':'Задача возвращена');await render();});
+  rememberRecent('tasks',t.id,t.title);
+  const node=openModal('Задача',`<div class="detail-hero"><span class="status-pill ${t.completed?'success':isOverdue(t)?'danger':statusTone(t.priority)}">${t.completed?'Выполнена':isOverdue(t)?'Просрочено':esc(t.priority)}</span><h3 class="detail-title">${esc(t.title)}</h3><div class="detail-meta">${esc(t.object||'Без объекта')} · ${t.dueAt?formatFullDate(t.dueAt):'Без срока'}</div><div class="detail-grid">${t.description?`<div class="detail-field"><div class="detail-field-label">Подробности</div><div class="detail-field-value">${nl2br(t.description)}</div></div>`:''}</div></div>${relatedEntitiesHtml('tasks',t.id)}<div class="button-row"><button class="button primary" id="toggleTaskDetail">${icon(t.completed?'clock':'check')}${t.completed?'Вернуть в работу':'Выполнить'}</button><button class="button" id="editTask">${icon('edit')}Изменить</button></div>`);
+  node.querySelector('#toggleTaskDetail').addEventListener('click',async()=>{closeModal();await toggleTaskWithUndo(t);});
   node.querySelector('#editTask').addEventListener('click',()=>{closeModal();openTaskForm(t);});
+  bindRelatedEntityLinks(node);
 }
 
-function openInspectionForm(existing = null) {
-  const photos=[...(existing?.photos||[])];
-  const values=existing?.items?.map(x=>({...x}))||INSPECTION_ITEMS.map(name=>({name,status:'skip'}));
+function openInspectionForm(existing = null, restoredDraft = null) {
+  const isExisting=Boolean(existing?.id);
+  const photos=[...(restoredDraft?.data?.photos||existing?.photos||[])];
+  const values=(restoredDraft?.data?.items||existing?.items)?.map(x=>({...x}))||INSPECTION_ITEMS.map(name=>({name,status:'skip'}));
   const checklist=()=>`<div class="checklist">${values.map((item,i)=>`<div class="check-row"><div class="check-label">${esc(item.name)}</div><div class="check-options">${[['good','Исправно'],['issue','Замечание'],['skip','Не проверено']].map(([v,l])=>`<button type="button" class="check-option ${item.status===v?`active ${v}`:''}" data-check-index="${i}" data-check-value="${v}">${l}</button>`).join('')}</div></div>`).join('')}</div>`;
   const body=`<form id="inspectionForm">${eventSelectField(existing?.eventId)}<div class="form-grid two"><div class="field"><label class="required" for="inspectionObject">Объект</label><select id="inspectionObject" required>${optionsHtml(OBJECTS,existing?.object||'КПП-1')}</select></div><div class="field"><label class="required" for="inspectionDate">Дата и время</label><input id="inspectionDate" type="datetime-local" required value="${localDateTimeValue(existing?.date?new Date(existing.date):new Date())}"></div></div><div class="field"><label class="required" for="inspectionEquipment">Оборудование</label><input id="inspectionEquipment" required value="${esc(existing?.equipment||'')}" placeholder="Например: турникеты №1–8"></div><div class="field"><label>Чек-лист</label><div id="inspectionChecklist">${checklist()}</div></div><div class="field"><label for="inspectionConclusion">Заключение и замечания</label><textarea id="inspectionConclusion" placeholder="Опишите обнаруженные недостатки и выполненные действия">${esc(existing?.conclusion||'')}</textarea></div><div class="field"><label>Фотографии</label><div id="inspectionPhotos">${photoPickerHtml(photos)}</div></div><div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Создать задачу по замечаниям</strong><span>Доступно, если есть замечания</span></div><button type="button" class="switch" id="inspectionTaskSwitch" role="switch" aria-checked="false" aria-label="Создать задачу по замечаниям"></button></div></div>${existing?`<button type="button" class="button danger full" data-delete-inspection="${esc(existing.id)}">${icon('trash')}Удалить осмотр</button>`:''}</form>`;
-  const node=openModal(existing?'Редактировать осмотр':'Новый техосмотр',body,{actionHtml:'<button class="text-button" id="saveInspection">Сохранить</button>'});
+  const node=openModal(isExisting?'Редактировать осмотр':'Новый техосмотр',body,{actionHtml:'<button class="text-button" id="saveInspection">Сохранить</button>'});
   const bindChecks=()=>node.querySelectorAll('[data-check-index]').forEach(btn=>btn.addEventListener('click',()=>{values[Number(btn.dataset.checkIndex)].status=btn.dataset.checkValue;node.querySelector('#inspectionChecklist').innerHTML=checklist();bindChecks();}));bindChecks();
-  const renderPhotos=()=>{node.querySelector('#inspectionPhotos').innerHTML=photoPickerHtml(photos);node.querySelector('#photoInput')?.addEventListener('change',e=>handlePhotoFiles(e.target.files,photos,renderPhotos));node.querySelectorAll('[data-remove-photo]').forEach(b=>b.addEventListener('click',()=>{photos.splice(Number(b.dataset.removePhoto),1);renderPhotos();}));};renderPhotos();
+  const renderPhotos=()=>{node.querySelector('#inspectionPhotos').innerHTML=photoPickerHtml(photos);node.querySelector('#photoInput')?.addEventListener('change',async e=>{await handlePhotoFiles(e.target.files,photos,renderPhotos);interactionState.draftControllers.get(draftId('inspection',existing?.id||''))?.schedule();});node.querySelectorAll('[data-remove-photo]').forEach(b=>b.addEventListener('click',()=>{photos.splice(Number(b.dataset.removePhoto),1);renderPhotos();interactionState.draftControllers.get(draftId('inspection',existing?.id||''))?.schedule();}));};renderPhotos();
   const sw=node.querySelector('#inspectionTaskSwitch');sw.addEventListener('click',()=>{sw.classList.toggle('on');sw.setAttribute('aria-checked',String(sw.classList.contains('on')));});
+  const draftController=attachDraftAutosave(node,{
+    type:'inspection',entityId:existing?.id||'',restored:restoredDraft,formSelector:'#inspectionForm',
+    snapshot:()=>({values:formValues(node.querySelector('#inspectionForm')),items:values.map(item=>({...item})),photos:[...photos]}),
+    restore:data=>{applyFormValues(node.querySelector('#inspectionForm'),data.values);node.querySelector('#inspectionChecklist').innerHTML=checklist();bindChecks();renderPhotos();},
+  });
   node.querySelector('#saveInspection').addEventListener('click',async()=>{
     const form=node.querySelector('#inspectionForm');if(!form.reportValidity())return;
     const record={id:existing?.id||uid('inspection'),object:node.querySelector('#inspectionObject').value,equipment:node.querySelector('#inspectionEquipment').value.trim(),date:new Date(node.querySelector('#inspectionDate').value).toISOString(),eventId:node.querySelector('#linkedEvent')?.value||null,items:values,conclusion:node.querySelector('#inspectionConclusion').value.trim(),photos,createdAt:existing?.createdAt||nowISO(),updatedAt:nowISO(),sample:existing?.sample||false};
@@ -1133,33 +1426,48 @@ function openInspectionForm(existing = null) {
       : null;
     if (linkedTask) await putRecordsAtomically({ inspections:record, tasks:linkedTask });
     else await dbPut('inspections',record);
-    closeModal();toast(existing?'Осмотр обновлён':'Техосмотр сохранён');await render();
+    await draftController.clear();
+    closeModal();toast(isExisting?'Осмотр обновлён':'Техосмотр сохранён');await render();
   });
-  node.querySelector('[data-delete-inspection]')?.addEventListener('click',async()=>{closeModal({immediate:true});await deleteInspectionWithUndo(existing.id);});
+  node.querySelector('[data-delete-inspection]')?.addEventListener('click',async()=>{await draftController.clear();closeModal({immediate:true});await deleteInspectionWithUndo(existing.id);});
 }
 function openInspectionDetail(id) {
   const i=state.data.inspections.find(x=>x.id===id);if(!i)return;
+  rememberRecent('inspections',i.id,i.equipment||'Техосмотр');
   const issues=i.items.filter(x=>x.status==='issue');
-  const node=openModal('Техосмотр',`<div class="detail-hero"><span class="status-pill ${issues.length?'warning':'success'}">${issues.length?`${issues.length} замечаний`:'Нарушений нет'}</span><h3 class="detail-title">${esc(i.equipment)}</h3><div class="detail-meta">${esc(i.object)} · ${formatFullDate(i.date)}</div></div><div class="modal-section"><h3 class="modal-section-title">Результаты</h3><div class="list-card">${i.items.map(x=>`<div class="list-row"><span class="row-icon ${x.status==='good'?'success':x.status==='issue'?'warning':''}">${icon(x.status==='good'?'check':x.status==='issue'?'alert':'more')}</span><span class="list-row-main"><span class="list-row-title">${esc(x.name)}</span><span class="list-row-meta">${x.status==='good'?'Исправно':x.status==='issue'?'Замечание':'Не проверено'}</span></span></div>`).join('')}</div></div>${i.conclusion?`<div class="detail-field"><div class="detail-field-label">Заключение</div><div class="detail-field-value">${nl2br(i.conclusion)}</div></div>`:''}${i.photos?.length?`<div class="modal-section"><h3 class="modal-section-title">Фотографии</h3><div class="photo-gallery">${i.photos.map((p,index)=>`<img src="${esc(p)}" alt="Фото техосмотра ${index+1}">`).join('')}</div></div>`:''}<button class="button full" id="editInspection">${icon('edit')}Редактировать</button>`);
+  const node=openModal('Техосмотр',`<div class="detail-hero"><span class="status-pill ${issues.length?'warning':'success'}">${issues.length?`${issues.length} замечаний`:'Нарушений нет'}</span><h3 class="detail-title">${esc(i.equipment)}</h3><div class="detail-meta">${esc(i.object)} · ${formatFullDate(i.date)}</div></div><div class="modal-section"><h3 class="modal-section-title">Результаты</h3><div class="list-card">${i.items.map(x=>`<div class="list-row"><span class="row-icon ${x.status==='good'?'success':x.status==='issue'?'warning':''}">${icon(x.status==='good'?'check':x.status==='issue'?'alert':'more')}</span><span class="list-row-main"><span class="list-row-title">${esc(x.name)}</span><span class="list-row-meta">${x.status==='good'?'Исправно':x.status==='issue'?'Замечание':'Не проверено'}</span></span></div>`).join('')}</div></div>${i.conclusion?`<div class="detail-field"><div class="detail-field-label">Заключение</div><div class="detail-field-value">${nl2br(i.conclusion)}</div></div>`:''}${i.photos?.length?`<div class="modal-section"><h3 class="modal-section-title">Фотографии</h3><div class="photo-gallery">${i.photos.map((p,index)=>`<img src="${esc(p)}" alt="Фото техосмотра ${index+1}">`).join('')}</div></div>`:''}${relatedEntitiesHtml('inspections',i.id)}<div class="button-row"><button class="button" id="repeatInspection">${icon('copy')}Повторить</button><button class="button" id="editInspection">${icon('edit')}Редактировать</button></div>`);
   node.querySelector('#editInspection').addEventListener('click',()=>{closeModal();openInspectionForm(i);});
+  node.querySelector('#repeatInspection').addEventListener('click',()=>{closeModal({immediate:true});openInspectionForm({...i,id:null,date:nowISO(),items:i.items.map(item=>({...item,status:'skip'})),photos:[],conclusion:'',createdAt:null,updatedAt:null});});
+  bindRelatedEntityLinks(node);
 }
 
-function openEquipmentForm(existing = null) {
+function openEquipmentForm(existing = null, restoredDraft = null) {
   const e=existing||{};
-  const body=`<form id="equipmentForm"><div class="field"><label class="required" for="equipmentName">Название</label><input id="equipmentName" required value="${esc(e.name||'')}" placeholder="Например: Турникет КПП-1 №3"></div><div class="form-grid two"><div class="field"><label for="equipmentType">Тип</label><input id="equipmentType" value="${esc(e.type||'')}" placeholder="Турникет, касса, сервер"></div><div class="field"><label for="equipmentObject">Объект</label><select id="equipmentObject"><option value="">Без объекта</option>${optionsHtml(OBJECTS,e.object||'')}</select></div><div class="field"><label for="equipmentDesignation">Номер / обозначение</label><input id="equipmentDesignation" value="${esc(e.designation||'')}" placeholder="Т-03"></div><div class="field"><label for="equipmentStatus">Статус</label><select id="equipmentStatus">${optionsHtml(EQUIPMENT_STATUSES,e.status||'Работает')}</select></div><div class="field"><label for="equipmentIp">IP-адрес</label><input id="equipmentIp" inputmode="decimal" value="${esc(e.ip||'')}" placeholder="192.168.0.10"></div><div class="field"><label for="equipmentSerial">Серийный номер</label><input id="equipmentSerial" value="${esc(e.serial||'')}"></div></div><div class="field"><label for="equipmentNote">Заметка</label><textarea id="equipmentNote">${esc(e.note||'')}</textarea></div>${e.id?`<button type="button" class="button danger full" data-delete-equipment="${esc(e.id)}">${icon('trash')}Удалить оборудование</button>`:''}</form>`;
+  const body=`<form id="equipmentForm"><div class="field"><label class="required" for="equipmentName">Название</label><input id="equipmentName" required value="${esc(e.name||'')}" placeholder="Например: Турникет КПП-1 №3"></div><div class="form-grid two"><div class="field"><label for="equipmentType">Тип</label><input id="equipmentType" value="${esc(e.type||'')}" placeholder="Турникет, касса, сервер"></div><div class="field"><label for="equipmentObject">Объект</label><select id="equipmentObject"><option value="">Без объекта</option>${optionsHtml(OBJECTS,e.object||'')}</select></div><div class="field"><label for="equipmentLocation">Место установки</label><input id="equipmentLocation" value="${esc(e.location||'')}" placeholder="Например: правая линия, стойка 2"></div><div class="field"><label for="equipmentDesignation">Номер / обозначение</label><input id="equipmentDesignation" value="${esc(e.designation||'')}" placeholder="Т-03"></div><div class="field"><label for="equipmentStatus">Статус</label><select id="equipmentStatus">${optionsHtml(EQUIPMENT_STATUSES,e.status||'Работает')}</select></div><div class="field"><label for="equipmentIp">IP-адрес</label><input id="equipmentIp" inputmode="decimal" value="${esc(e.ip||'')}" placeholder="192.168.0.10"></div><div class="field"><label for="equipmentSerial">Серийный номер</label><input id="equipmentSerial" value="${esc(e.serial||'')}"></div></div><div class="field"><label for="equipmentNote">Заметка</label><textarea id="equipmentNote">${esc(e.note||'')}</textarea></div><div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Избранное оборудование</strong><span>Показывать в быстром фильтре</span></div><button type="button" class="switch ${e.favorite?'on':''}" id="equipmentFavorite" role="switch" aria-checked="${Boolean(e.favorite)}" aria-label="Избранное оборудование"></button></div></div>${e.id?`<button type="button" class="button danger full" data-delete-equipment="${esc(e.id)}">${icon('trash')}Удалить оборудование</button>`:''}</form>`;
   const node=openModal(e.id?'Редактировать':'Новое оборудование',body,{actionHtml:'<button class="text-button" id="saveEquipment">Сохранить</button>'});
-  node.querySelector('#saveEquipment').addEventListener('click',async()=>{const form=node.querySelector('#equipmentForm');if(!form.reportValidity())return;await dbPut('equipment',{id:e.id||uid('equipment'),name:node.querySelector('#equipmentName').value.trim(),type:node.querySelector('#equipmentType').value.trim(),object:node.querySelector('#equipmentObject').value,designation:node.querySelector('#equipmentDesignation').value.trim(),status:node.querySelector('#equipmentStatus').value,ip:node.querySelector('#equipmentIp').value.trim(),serial:node.querySelector('#equipmentSerial').value.trim(),note:node.querySelector('#equipmentNote').value.trim(),createdAt:e.createdAt||nowISO(),updatedAt:nowISO(),sample:e.sample||false});closeModal();toast(e.id?'Оборудование обновлено':'Оборудование добавлено');await render();});
-  node.querySelector('[data-delete-equipment]')?.addEventListener('click',async()=>{closeModal({immediate:true});await deleteEquipmentWithUndo(e.id);});
+  const favorite=node.querySelector('#equipmentFavorite');favorite.addEventListener('click',()=>{favorite.classList.toggle('on');favorite.setAttribute('aria-checked',String(favorite.classList.contains('on')));});
+  const draftController=attachDraftAutosave(node,{type:'equipment',entityId:e.id||'',restored:restoredDraft,formSelector:'#equipmentForm'});
+  node.querySelector('#saveEquipment').addEventListener('click',async event=>{
+    const form=node.querySelector('#equipmentForm');if(!form.reportValidity())return;
+    const record={id:e.id||uid('equipment'),name:node.querySelector('#equipmentName').value.trim(),type:node.querySelector('#equipmentType').value.trim(),object:node.querySelector('#equipmentObject').value,location:node.querySelector('#equipmentLocation').value.trim(),designation:node.querySelector('#equipmentDesignation').value.trim(),status:node.querySelector('#equipmentStatus').value,ip:node.querySelector('#equipmentIp').value.trim(),serial:node.querySelector('#equipmentSerial').value.trim(),note:node.querySelector('#equipmentNote').value.trim(),favorite:favorite.classList.contains('on'),createdAt:e.createdAt||nowISO(),updatedAt:nowISO(),sample:e.sample||false};
+    const duplicates=BpsProductivity.findEquipmentDuplicates(state.data.equipment,record,e.id||null);
+    if(duplicates.length&&!event.currentTarget.dataset.duplicateConfirmed){event.currentTarget.dataset.duplicateConfirmed='true';toast(`Возможный дубликат: ${duplicates.slice(0,2).map(item=>item.name).join(', ')}. Нажмите «Сохранить» ещё раз.` ,{duration:7000});return;}
+    await dbPut('equipment',record);await draftController.clear();closeModal();toast(e.id?'Оборудование обновлено':'Оборудование добавлено');await render();
+  });
+  node.querySelector('[data-delete-equipment]')?.addEventListener('click',async()=>{await draftController.clear();closeModal({immediate:true});await deleteEquipmentWithUndo(e.id);});
 }
 function openEquipmentDetail(id) {
   const e=state.data.equipment.find(x=>x.id===id);if(!e)return;
+  rememberRecent('equipment',e.id,e.name);
   const needle=(e.designation||e.name).toLowerCase();
   const history=state.data.entries.filter(x=>`${x.equipment} ${x.description}`.toLowerCase().includes(needle));
   const inspections=state.data.inspections.filter(x=>x.equipment.toLowerCase().includes(needle));
-  const node=openModal('Оборудование',`<div class="detail-hero"><span class="status-pill ${statusTone(e.status)}">${esc(e.status)}</span><h3 class="detail-title">${esc(e.name)}</h3><div class="detail-meta">${esc(e.object||'Без объекта')} · ${esc(e.type||'Тип не указан')}</div><div class="detail-grid">${e.designation?`<div class="detail-field"><div class="detail-field-label">Обозначение</div><div class="detail-field-value">${esc(e.designation)}</div></div>`:''}${e.ip?`<div class="detail-field"><div class="detail-field-label">IP-адрес</div><div class="detail-field-value">${esc(e.ip)}</div></div>`:''}${e.serial?`<div class="detail-field"><div class="detail-field-label">Серийный номер</div><div class="detail-field-value">${esc(e.serial)}</div></div>`:''}${e.note?`<div class="detail-field"><div class="detail-field-label">Заметка</div><div class="detail-field-value">${nl2br(e.note)}</div></div>`:''}</div></div><div class="modal-section"><h3 class="modal-section-title">Связанная история</h3>${history.length||inspections.length?`<div class="list-card">${history.slice(0,5).map(entryRow).join('')}${inspections.slice(0,5).map(i=>listRow({id:i.id,action:'inspection-detail',iconName:'inspection',title:i.equipment,meta:`Техосмотр · ${formatDateTime(i.date)}`})).join('')}</div>`:emptyState('journal','История не найдена','Связь определяется по обозначению или названию оборудования.')}</div>${window.knowledgeLinkedArticlesHtml?.(e.id,null)||''}<button class="button full" id="editEquipment">${icon('edit')}Редактировать</button>`);
+  const node=openModal('Оборудование',`<div class="detail-hero"><span class="status-pill ${statusTone(e.status)}">${esc(e.status)}</span><h3 class="detail-title">${esc(e.name)}</h3><div class="detail-meta">${esc(e.object||e.location||'Без объекта')} · ${esc(e.type||'Тип не указан')}</div><div class="detail-grid">${e.location?`<div class="detail-field"><div class="detail-field-label">Место установки</div><div class="detail-field-value">${esc(e.location)}</div></div>`:''}${e.designation?`<div class="detail-field"><div class="detail-field-label">Обозначение</div><div class="detail-field-value">${esc(e.designation)}</div></div>`:''}${e.ip?`<div class="detail-field"><div class="detail-field-label">IP-адрес</div><div class="detail-field-value">${esc(e.ip)}</div></div>`:''}${e.serial?`<div class="detail-field"><div class="detail-field-label">Серийный номер</div><div class="detail-field-value">${esc(e.serial)}</div></div>`:''}${e.note?`<div class="detail-field"><div class="detail-field-label">Заметка</div><div class="detail-field-value">${nl2br(e.note)}</div></div>`:''}</div></div><div class="modal-section"><h3 class="modal-section-title">Связанная история</h3>${history.length||inspections.length?`<div class="list-card">${history.slice(0,5).map(entryRow).join('')}${inspections.slice(0,5).map(i=>listRow({id:i.id,action:'inspection-detail',iconName:'inspection',title:i.equipment,meta:`Техосмотр · ${formatDateTime(i.date)}`})).join('')}</div>`:emptyState('journal','История не найдена','Связь определяется по обозначению или названию оборудования.')}</div>${relatedEntitiesHtml('equipment',e.id)}<div class="button-row"><button class="button" id="favoriteEquipment">${icon(e.favorite?'star-filled':'star')}${e.favorite?'В избранном':'В избранное'}</button><button class="button" id="editEquipment">${icon('edit')}Редактировать</button></div>`);
   node.querySelector('#editEquipment').addEventListener('click',()=>{closeModal();openEquipmentForm(e);});
+  node.querySelector('#favoriteEquipment').addEventListener('click',async()=>{e.favorite=!e.favorite;e.updatedAt=nowISO();await dbPut('equipment',e);closeModal();toast(e.favorite?'Добавлено в избранное':'Удалено из избранного');await render();});
   node.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>{const action=b.dataset.action,id=b.dataset.id;closeModal();if(action==='entry-detail')openEntryDetail(id);if(action==='inspection-detail')openInspectionDetail(id);}));
   node.querySelectorAll('[data-kb-action="open-article"]').forEach(button=>button.addEventListener('click',()=>{const articleId=button.dataset.id;closeModal({immediate:true});openKnowledgeArticleDetail(articleId);}));
+  bindRelatedEntityLinks(node);
   bindSwipeRows(node);
 }
 
@@ -1196,6 +1504,7 @@ async function exportData() {
 async function readBackupFile(file) {
   if (!file) throw new Error('Файл не выбран.');
   if (file.size > 120 * 1024 * 1024) throw new Error('Архив больше 120 МБ и не может быть обработан безопасно.');
+  await ensureStorageCapacity(file.size * 2, 'проверки и восстановления архива');
   const bytes = new Uint8Array(await file.arrayBuffer());
   let payload;
   let manifest = null;
@@ -1222,6 +1531,8 @@ async function importValidatedData(validation, mode) {
   ];
   if (mode === 'merge') await atomicMergeData(validation.payload.data, { settings });
   else await atomicReplaceData(validation.payload.data, { settings });
+  interactionState.dirtyDraftKeys.clear();
+  interactionState.draftControllers.clear();
   return importedAt;
 }
 
@@ -1273,7 +1584,12 @@ async function openImportPreview(file) {
 }
 
 async function clearAll() {
-  await runTransaction([...STORE_NAMES, 'trash'], 'readwrite', stores => { [...STORE_NAMES, 'trash'].forEach(store => stores[store].clear()); });
+  const storesToClear=[...STORE_NAMES,...INTERNAL_STORE_NAMES];
+  await runTransaction(storesToClear, 'readwrite', stores => { storesToClear.forEach(store => stores[store].clear()); });
+  interactionState.dirtyDraftKeys.clear();
+  interactionState.draftControllers.clear();
+  state.recentItems=[];
+  try { localStorage.removeItem('bps-last-data-change'); } catch (_) {}
   if(window.ensureKnowledgeSeed)await window.ensureKnowledgeSeed();
   await setSetting('theme','system');await setSetting('dataSchemaVersion',SCHEMA_VERSION);await applyStoredTheme();toast('Все данные удалены');await render();
 }
@@ -1370,6 +1686,54 @@ function openClearDataModal() {
   button.addEventListener('click', async () => { await clearAll(); closeModal(); });
 }
 
+function openQuickCreate() {
+  const options = [
+    ['new-entry','journal','Запись журнала','Событие, работа или наблюдение'],
+    ['new-task','task','Задача','Срок, приоритет и связанный объект'],
+    ['new-inspection','inspection','Техосмотр','Чек-лист и фотографии'],
+    ['new-equipment','equipment','Оборудование','Новый объект локального реестра'],
+  ];
+  const node = openModal('Быстро создать', `<div class="quick-create-grid">${options.map(([action,iconName,title,subtitle])=>`<button class="quick-create-card" data-quick-create="${action}"><span class="row-icon accent">${icon(iconName)}</span><span><strong>${esc(title)}</strong><small>${esc(subtitle)}</small></span>${icon('chevron')}</button>`).join('')}</div>`);
+  node.querySelectorAll('[data-quick-create]').forEach(button => button.addEventListener('click', () => {
+    const action = button.dataset.quickCreate;
+    closeModal({ immediate:true });
+    handleAppAction(action);
+  }));
+}
+
+async function clearFilters(target) {
+  if (target === 'journal') state.journal = { query:'', type:'Все типы', object:'Все объекты', status:'Все статусы', period:'Все даты' };
+  else if (target === 'tasks') state.taskFilter = 'Открытые';
+  else if (target === 'inspections') state.inspectionFilter = 'Все';
+  else if (target === 'equipment') state.equipment = { query:'', status:'Все статусы', favorite:false };
+  else if (target === 'search') state.globalSearch = { query:'', type:'all' };
+  else if (target === 'events') state.events = { query:'', status:'Все статусы' };
+  if (target !== 'search') await setSetting(`filter:${target}`, target === 'tasks' ? state.taskFilter : target === 'inspections' ? state.inspectionFilter : state[target]);
+  await render();
+}
+
+async function toggleTaskWithUndo(task) {
+  const previous = { completed:Boolean(task.completed), completedAt:task.completedAt || null };
+  task.completed = !task.completed;
+  task.completedAt = task.completed ? nowISO() : null;
+  task.updatedAt = nowISO();
+  await dbPut('tasks', task);
+  toast(task.completed ? 'Задача выполнена' : 'Задача возвращена', {
+    actionText:'Отменить',
+    duration:6500,
+    onAction:async () => {
+      const fresh = await dbGet('tasks', task.id);
+      if (!fresh) return;
+      fresh.completed = previous.completed;
+      fresh.completedAt = previous.completedAt;
+      fresh.updatedAt = nowISO();
+      await dbPut('tasks', fresh);
+      await render();
+    },
+  });
+  await render();
+}
+
 async function handleAppAction(action, id) {
   if(action==='new-knowledge')openKnowledgeArticleForm();
   else if(action==='knowledge-detail')openKnowledgeArticleDetail(id);
@@ -1384,6 +1748,7 @@ async function handleAppAction(action, id) {
   else if(action==='new-task')openTaskForm();
   else if(action==='new-inspection')openInspectionForm();
   else if(action==='new-equipment')openEquipmentForm();
+  else if(action==='quick-create')openQuickCreate();
   else if(action==='entry-detail')openEntryDetail(id);
   else if(action==='task-detail')openTaskDetail(id);
   else if(action==='inspection-detail')openInspectionDetail(id);
@@ -1396,9 +1761,15 @@ async function handleAppAction(action, id) {
   else if(action==='delete-inspection')await deleteInspectionWithUndo(id);
   else if(action==='delete-equipment')await deleteEquipmentWithUndo(id);
   else if(action==='route')go(id);
-  else if(action==='toggle-task'){const t=state.data.tasks.find(x=>x.id===id);if(t){t.completed=!t.completed;t.completedAt=t.completed?nowISO():null;t.updatedAt=nowISO();await dbPut('tasks',t);toast(t.completed?'Задача выполнена':'Задача возвращена');await render();}}
+  else if(action==='toggle-task'){const t=state.data.tasks.find(x=>x.id===id);if(t)await toggleTaskWithUndo(t);}
   else if(action==='copy-report'){await navigator.clipboard.writeText(buildDailyReport());toast('Отчёт скопирован');}
   else if(action==='share-report'){const text=buildDailyReport();if(navigator.share)await navigator.share({title:'Итоги рабочего дня',text});else{await navigator.clipboard.writeText(text);toast('Web Share недоступен — текст скопирован');}}
+  else if(action==='export-report-csv'){
+    const report=BpsProductivity.reportData(state.data,state.report);
+    downloadBlob(new Blob([BpsProductivity.reportToCsv(report)],{type:'text/csv;charset=utf-8'}),`БПС-Пульт-отчёт-${state.report.from}-${state.report.to}.csv`);
+    toast('CSV-отчёт создан');
+  }
+  else if(action==='print-report'){document.body.classList.add('printing-report');window.print();setTimeout(()=>document.body.classList.remove('printing-report'),500);}
   else if(action==='export-data'){try{await exportData();}catch(error){toast(error.message||'Ошибка экспорта');}}
   else if(action==='request-persistence'){try{await requestStoragePersistence();}catch(error){toast(error.message||'Не удалось запросить хранение');}}
   else if(action==='empty-trash')confirmModal('Очистить корзину?','Удалённые объекты больше нельзя будет восстановить.','Очистить',async()=>{await dbClear('trash');toast('Корзина очищена');await render();},true);
@@ -1444,7 +1815,7 @@ function bindEdgeBackGesture() {
   let startX=0,startY=0,pointerId=null;
   addEventListener('pointerdown',e=>{
     if(e.clientX>22||document.querySelector('[data-modal-backdrop]'))return;
-    if(!['tasks','events','knowledge','equipment','report','settings','install'].includes(state.route))return;
+    if(!['tasks','events','knowledge','equipment','search','report','settings','install'].includes(state.route))return;
     startX=e.clientX;startY=e.clientY;pointerId=e.pointerId;
   });
   addEventListener('pointerup',e=>{
@@ -1462,11 +1833,48 @@ function bindPageEvents() {
     await handleAppAction(el.dataset.action,el.dataset.id);
   }));
   bindSwipeRows(main);
-  const q=main.querySelector('#journalSearch');if(q)q.addEventListener('input',debounce(()=>{state.journal.query=q.value;render();},180));
-  [['journalType','type'],['journalObject','object'],['journalStatus','status'],['journalPeriod','period']].forEach(([id,key])=>main.querySelector(`#${id}`)?.addEventListener('change',e=>{state.journal[key]=e.target.value;render();}));
-  main.querySelectorAll('[data-task-filter]').forEach(b=>b.addEventListener('click',()=>{state.taskFilter=b.dataset.taskFilter;render();}));
+  main.querySelectorAll('[data-clear-filters]').forEach(button=>button.addEventListener('click',()=>clearFilters(button.dataset.clearFilters)));
+  const q=main.querySelector('#journalSearch');if(q)q.addEventListener('input',debounce(async()=>{state.journal.query=q.value;await setSetting('filter:journal',state.journal);await render();document.querySelector('#journalSearch')?.focus({preventScroll:true});},180));
+  [['journalType','type'],['journalObject','object'],['journalStatus','status'],['journalPeriod','period']].forEach(([id,key])=>main.querySelector(`#${id}`)?.addEventListener('change',async e=>{state.journal[key]=e.target.value;await setSetting('filter:journal',state.journal);await render();}));
+  main.querySelectorAll('[data-task-filter]').forEach(b=>b.addEventListener('click',async()=>{state.taskFilter=b.dataset.taskFilter;await setSetting('filter:tasks',state.taskFilter);await render();}));
+  main.querySelectorAll('[data-inspection-filter]').forEach(b=>b.addEventListener('click',async()=>{state.inspectionFilter=b.dataset.inspectionFilter;await setSetting('filter:inspections',state.inspectionFilter);await render();}));
+  main.querySelectorAll('[data-quick-filter]').forEach(button=>button.addEventListener('click',async()=>{
+    const target=button.dataset.quickFilter;
+    if(target==='today'){state.journal.period='Сегодня';await setSetting('filter:journal',state.journal);go('journal');}
+    else if(target==='overdue'){state.taskFilter='Просрочено';await setSetting('filter:tasks',state.taskFilter);go('tasks');}
+    else if(target==='without-result'){state.inspectionFilter='Без результата';await setSetting('filter:inspections',state.inspectionFilter);go('inspections');}
+    else if(target==='attention'){state.equipment.status='Требует внимания';await setSetting('filter:equipment',state.equipment);go('equipment');}
+  }));
+  const equipmentSearch=main.querySelector('#equipmentSearch');
+  equipmentSearch?.addEventListener('input',debounce(async()=>{state.equipment.query=equipmentSearch.value;await setSetting('filter:equipment',state.equipment);await render();document.querySelector('#equipmentSearch')?.focus({preventScroll:true});},180));
+  main.querySelectorAll('[data-equipment-status]').forEach(button=>button.addEventListener('click',async()=>{state.equipment.status=button.dataset.equipmentStatus;await setSetting('filter:equipment',state.equipment);await render();}));
+  main.querySelector('[data-equipment-favorite]')?.addEventListener('click',async()=>{state.equipment.favorite=!state.equipment.favorite;await setSetting('filter:equipment',state.equipment);await render();});
+  const globalSearch=main.querySelector('#globalSearchInput');
+  globalSearch?.addEventListener('input',debounce(async()=>{state.globalSearch.query=globalSearch.value;await render();const replacement=document.querySelector('#globalSearchInput');replacement?.focus({preventScroll:true});replacement?.setSelectionRange(replacement.value.length,replacement.value.length);},140));
+  main.querySelectorAll('[data-search-type]').forEach(button=>button.addEventListener('click',async()=>{state.globalSearch.type=button.dataset.searchType;await render();}));
+  const syncReport=async()=>{
+    const from=main.querySelector('#reportFrom')?.value||state.report.from;
+    const to=main.querySelector('#reportTo')?.value||from;
+    state.report.from=from<=to?from:to;
+    state.report.to=from<=to?to:from;
+    state.report.sections=[...main.querySelectorAll('[data-report-section]:checked')].map(input=>input.dataset.reportSection);
+    await render();
+  };
+  main.querySelectorAll('#reportFrom,#reportTo,[data-report-section]').forEach(input=>input.addEventListener('change',syncReport));
+  main.querySelectorAll('[data-report-period]').forEach(button=>button.addEventListener('click',async()=>{
+    const end=new Date();
+    const start=new Date(end);
+    if(button.dataset.reportPeriod==='week')start.setDate(end.getDate()-6);
+    state.report.from=dayKey(start);state.report.to=dayKey(end);await render();
+  }));
   main.querySelectorAll('[data-theme-choice]').forEach(b=>b.addEventListener('click',async()=>{await setSetting('theme',b.dataset.themeChoice);setTheme(b.dataset.themeChoice);render();}));
+  const contrastSwitch=main.querySelector('#highContrastSwitch');
+  contrastSwitch?.addEventListener('click',async()=>{state.preferences.highContrast=!state.preferences.highContrast;document.documentElement.dataset.contrast=state.preferences.highContrast?'high':'normal';await saveUiPreferences();await render();});
+  main.querySelector('#startupRoute')?.addEventListener('change',async event=>{state.preferences.startupRoute=event.target.value;await saveUiPreferences();toast('Раздел запуска сохранён');});
+  const operatorName=main.querySelector('#operatorName');
+  operatorName?.addEventListener('change',async()=>{state.preferences.operatorName=operatorName.value.trim()||'Инженер';await saveUiPreferences();toast('Имя для проверок сохранено');});
   main.querySelector('#importInput')?.addEventListener('change',e=>{const file=e.target.files?.[0];if(file)openImportPreview(file);e.target.value='';});
+  window.bindEventPageEvents?.(main);
   window.bindKnowledgePageEvents?.(main);
 }
 
@@ -1476,6 +1884,33 @@ function showUpdateAvailable(registration) {
   if (!bar) return;
   bar.hidden = false;
   document.body.classList.add('update-available');
+}
+async function activateWaitingWorker() {
+  const waiting = interactionState.updateRegistration?.waiting;
+  if (!waiting) { toast('Обновление ещё загружается'); return; }
+  sessionStorage.setItem('bps-update-requested','1');
+  waiting.postMessage({ type:'SKIP_WAITING' });
+}
+async function requestUpdateActivation() {
+  const drafts = await dbGetAll('drafts');
+  const lastBackupAt = await getSetting('lastBackupAt', null);
+  const backupDays = daysSince(lastBackupAt);
+  if (!drafts.length && backupDays !== null && backupDays < 7) {
+    await activateWaitingWorker();
+    return;
+  }
+  const warnings = [
+    drafts.length ? `${drafts.length} ${plural(drafts.length,'черновик сохранён','черновика сохранены','черновиков сохранены')} и восстановятся после запуска.` : '',
+    backupDays === null ? 'Резервная копия ещё не создавалась.' : backupDays >= 7 ? `Последней резервной копии ${backupDays} дней.` : '',
+  ].filter(Boolean);
+  const node = openModal('Перед обновлением', `<div class="warning-box spaced-bottom">${warnings.map(message=>`<p>${esc(message)}</p>`).join('')}<p>Для важных рабочих данных рекомендуется сначала создать .bpsbackup.</p></div><div class="button-stack"><button class="button primary full" id="updateNow">Обновить сейчас</button><button class="button full" id="backupBeforeUpdate">${icon('download')}Создать резервную копию</button><button class="button full" data-modal-close>Позже</button></div>`);
+  node.querySelector('#updateNow').addEventListener('click',async()=>{closeModal({immediate:true});await activateWaitingWorker();});
+  node.querySelector('#backupBeforeUpdate').addEventListener('click',async()=>{
+    try { await exportData(); }
+    catch(error){toast(error.message||'Не удалось создать резервную копию');return;}
+    closeModal({immediate:true});
+    await activateWaitingWorker();
+  });
 }
 async function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return null;
@@ -1494,10 +1929,7 @@ async function registerServiceWorker() {
     reloading = true; sessionStorage.removeItem('bps-update-requested'); location.reload();
   });
   document.getElementById('applyUpdate')?.addEventListener('click', async () => {
-    const waiting = interactionState.updateRegistration?.waiting;
-    if (!waiting) { toast('Обновление ещё загружается'); return; }
-    sessionStorage.setItem('bps-update-requested','1');
-    waiting.postMessage({ type:'SKIP_WAITING' });
+    await requestUpdateActivation();
   });
   document.getElementById('dismissUpdate')?.addEventListener('click', () => {
     document.getElementById('updateBar').hidden = true;
@@ -1507,7 +1939,21 @@ async function registerServiceWorker() {
   return registration;
 }
 
-function debounce(fn,ms){let t;return(...args)=>{clearTimeout(t);t=setTimeout(()=>fn(...args),ms);};}
+function debounce(fn,ms){
+  let timer;
+  const wrapped=(...args)=>{
+    clearTimeout(timer);
+    timer=setTimeout(()=>{
+      timer=null;
+      fn(...args);
+    },ms);
+  };
+  wrapped.cancel=()=>{
+    clearTimeout(timer);
+    timer=null;
+  };
+  return wrapped;
+}
 
 async function applyStoredTheme(){const theme=await getSetting('theme','system');setTheme(theme);}
 async function init(){
@@ -1516,12 +1962,22 @@ async function init(){
     await openDatabase();
     await runLiveMigrations();
     await cleanupTrash();
+    await cleanupDrafts();
     if(window.ensureKnowledgeSeed)await window.ensureKnowledgeSeed();
     await applyStoredTheme();
+    await loadUiPreferences();
+    if (!sessionStorage.getItem('bps-session-started')) {
+      const startup = state.preferences.startupRoute === 'last'
+        ? await getSetting('lastRoute', 'today')
+        : state.preferences.startupRoute;
+      if (routeTitles[startup] && (!location.hash || currentRoute() === 'today')) history.replaceState(null,'',`#${startup}`);
+      sessionStorage.setItem('bps-session-started','1');
+    }
     document.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));
     document.getElementById('themeQuickBtn').addEventListener('click',cycleTheme);
+    document.getElementById('globalSearchBtn')?.addEventListener('click',()=>go('search'));
     document.querySelectorAll('.nav-button').forEach(btn=>btn.addEventListener('click',()=>go(btn.dataset.route)));
-    document.getElementById('recordButton').addEventListener('click',()=>openEntryForm());
+    document.getElementById('recordButton').addEventListener('click',openQuickCreate);
     document.addEventListener('pointerdown',e=>{if(interactionState.openSwipeRow&&!e.target.closest('[data-swipe-row]'))closeOpenSwipeRow();});
     bindEdgeBackGesture();
     addEventListener('hashchange',render);addEventListener('online',updateOnlineStatus);addEventListener('offline',updateOnlineStatus);updateOnlineStatus();
@@ -1530,6 +1986,7 @@ async function init(){
     matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',async()=>{if(await getSetting('theme','system')==='system'){setTheme('system');}});
     await render();
     await registerServiceWorker();
+    await restoreLatestDraft();
     const storage = await storageInfo();
     if (!storage.persisted && isStandalone()) console.info('Persistent storage is not guaranteed');
   } catch (error) {

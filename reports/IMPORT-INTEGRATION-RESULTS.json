@@ -1,5 +1,5 @@
 {
-  "version": "2.1.0",
+  "version": "2.5.0",
   "fixture": "tests/fixtures/legacy-schema-3.json",
   "previewShown": true,
   "migration": "3 → 4",
@@ -7,5 +7,6 @@
   "taskCountBefore": 2,
   "taskCountAfter": 3,
   "importedTaskVisible": true,
-  "corruptAndUnsafeArchivesRejectedByUnitTests": true
+  "corruptAndUnsafeArchivesRejectedByUnitTests": true,
+  "schema4FixtureMigratedTo5ByUnitTest": true
 }

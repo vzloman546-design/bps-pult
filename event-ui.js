@@ -107,12 +107,21 @@ function renderNextEventSection() {
 }
 
 function renderEvents() {
-  const events = state.data.events;
+  const filters = state.events || (state.events = { query:'', status:'Все статусы' });
+  const query = filters.query.trim().toLocaleLowerCase('ru-RU');
+  const events = state.data.events.filter(event => {
+    const hay = BpsProductivity.itemSearchText('events', event, state.data).join(' ').toLocaleLowerCase('ru-RU');
+    if (query && !hay.includes(query)) return false;
+    if (filters.status !== 'Все статусы' && EVENT_STATUS_LABELS[event.status] !== filters.status) return false;
+    return true;
+  });
   const active = events.filter(event => event.status !== 'completed');
   const completed = events.filter(event => event.status === 'completed').slice().sort((a,b) => new Date(b.date)-new Date(a.date));
-  return `<section class="section">
+  const activeFilterCount = [query, filters.status !== 'Все статусы'].filter(Boolean).length;
+  return `<section class="section filters"><div class="search-input-wrap">${icon('search')}<input id="eventSearch" type="search" aria-label="Поиск мероприятий" placeholder="Название, дата, гейт или ресурс" value="${esc(filters.query)}" autocomplete="off"></div><div class="filter-row">${['Все статусы',...Object.values(EVENT_STATUS_LABELS)].map(value=>`<button class="chip ${filters.status===value?'active':''}" data-event-filter="${esc(value)}">${esc(value)}</button>`).join('')}</div>${activeFilterCount?`<div class="filter-summary"><span>${activeFilterCount} ${plural(activeFilterCount,'фильтр','фильтра','фильтров')}</span><button class="text-button" data-clear-filters="events">Очистить фильтры</button></div>`:''}</section>
+  <section class="section">
     <div class="section-head"><div><h2 class="section-title">${active.length} ${plural(active.length,'активное','активных','активных')}</h2><p class="section-subtitle">Конфигурация создаётся отдельно для каждого мероприятия</p></div><button class="button primary small" data-action="new-event">${icon('plus')}Создать</button></div>
-    ${active.length ? `<div class="list-card">${active.map(eventRow).join('')}</div>` : emptyState('calendar','Нет активных мероприятий','Создайте мероприятие с нуля или на основе шаблона.','<button class="button primary small" data-action="new-event">Создать мероприятие</button>')}
+    ${active.length ? `<div class="list-card">${active.map(eventRow).join('')}</div>` : emptyState('calendar',activeFilterCount?'Ничего не найдено':'Нет активных мероприятий',activeFilterCount?'Очистите фильтры или измените запрос.':'Создайте мероприятие с нуля или на основе шаблона.',activeFilterCount?'<button class="button small" data-clear-filters="events">Очистить фильтры</button>':'<button class="button primary small" data-action="new-event">Создать мероприятие</button>')}
   </section>
   ${completed.length ? `<section class="section"><div class="section-head"><div><h2 class="section-title">Завершённые</h2></div></div><div class="list-card">${completed.map(eventRow).join('')}</div></section>` : ''}`;
 }
@@ -132,15 +141,16 @@ function openEventTemplateChooser() {
   }));
 }
 
-function openEventEditor(initialDraft, isExisting) {
+function openEventEditor(initialDraft, isExisting, restoredDraft = null) {
   let draft = BpsEventLogic.normalizeEvent(initialDraft);
   let expandedGateId = null;
   let expandedCashId = null;
   let validationMessages = [];
   const node = openModal(isExisting ? 'Редактировать мероприятие' : 'Новое мероприятие', '', { actionHtml:'<button class="text-button" id="saveEvent">Сохранить</button>' });
   const body = node.querySelector('.modal-body');
+  let draftController = null;
 
-  const syncBasicFields = () => {
+  const syncBasicFields = (schedule = true) => {
     const pick = selector => node.querySelector(selector);
     if (pick('#eventName')) draft.name = pick('#eventName').value;
     if (pick('#eventType')) draft.type = pick('#eventType').value;
@@ -148,6 +158,7 @@ function openEventEditor(initialDraft, isExisting) {
     if (pick('#eventDoors')) draft.doorsOpenAt = pick('#eventDoors').value;
     if (pick('#eventAudience')) draft.expectedAudience = Number(pick('#eventAudience').value || 0);
     if (pick('#eventNote')) draft.note = pick('#eventNote').value;
+    if (schedule) draftController?.schedule();
   };
 
   const gateSummary = gate => {
@@ -222,11 +233,12 @@ function openEventEditor(initialDraft, isExisting) {
       draft.systems[key] = !draft.systems[key];
       if (key === 'offlineSales' && !draft.systems.offlineSales) draft.cashDesks.forEach(desk => desk.mode = 'closed');
       renderEditor();
+      draftController?.schedule();
     }));
-    node.querySelector('[data-system-select="sib"]')?.addEventListener('change', event => { syncBasicFields(); draft.systems.sib = event.target.value; renderEditor(); });
+    node.querySelector('[data-system-select="sib"]')?.addEventListener('change', event => { syncBasicFields(); draft.systems.sib = event.target.value; renderEditor(); draftController?.schedule(); });
     node.querySelectorAll('[data-toggle-gate]').forEach(button => button.addEventListener('click', () => { syncBasicFields(); expandedGateId = expandedGateId === button.dataset.toggleGate ? null : button.dataset.toggleGate; expandedCashId = null; renderEditor(); }));
-    node.querySelectorAll('[data-gate-status]').forEach(select => select.addEventListener('change', event => { syncBasicFields(); const gate = draft.gates.find(item => item.id === select.dataset.gateStatus); gate.status = event.target.value; renderEditor(); }));
-    node.querySelectorAll('[data-turnstile-mode]').forEach(select => select.addEventListener('change', event => { syncBasicFields(); const gate = draft.gates.find(item => item.id === select.dataset.gateId); const turnstile = gate.turnstiles.find(item => item.id === select.dataset.turnstileMode); turnstile.mode = event.target.value; if (turnstile.mode === 'active' && ['not_requested','planned_closed'].includes(gate.status)) gate.status = 'partial'; renderEditor(); }));
+    node.querySelectorAll('[data-gate-status]').forEach(select => select.addEventListener('change', event => { syncBasicFields(); const gate = draft.gates.find(item => item.id === select.dataset.gateStatus); gate.status = event.target.value; renderEditor(); draftController?.schedule(); }));
+    node.querySelectorAll('[data-turnstile-mode]').forEach(select => select.addEventListener('change', event => { syncBasicFields(); const gate = draft.gates.find(item => item.id === select.dataset.gateId); const turnstile = gate.turnstiles.find(item => item.id === select.dataset.turnstileMode); turnstile.mode = event.target.value; if (turnstile.mode === 'active' && ['not_requested','planned_closed'].includes(gate.status)) gate.status = 'partial'; renderEditor(); draftController?.schedule(); }));
     node.querySelectorAll('[data-gate-preset]').forEach(button => button.addEventListener('click', () => {
       syncBasicFields();
       const gate = draft.gates.find(item => item.id === button.dataset.gateId);
@@ -237,13 +249,14 @@ function openEventEditor(initialDraft, isExisting) {
       else if (button.dataset.gatePreset === 'first4') gate.status = 'partial';
       else gate.status = 'not_requested';
       renderEditor();
+      draftController?.schedule();
     }));
     node.querySelectorAll('[data-toggle-cash]').forEach(button => button.addEventListener('click', () => { syncBasicFields(); expandedCashId = expandedCashId === button.dataset.toggleCash ? null : button.dataset.toggleCash; expandedGateId = null; renderEditor(); }));
-    node.querySelectorAll('[data-cash-mode]').forEach(select => select.addEventListener('change', event => { syncBasicFields(); const desk = draft.cashDesks.find(item => item.id === select.dataset.cashMode); desk.mode = event.target.value; if (desk.mode !== 'closed') draft.systems.offlineSales = true; renderEditor(); }));
-    node.querySelectorAll('[data-add-assignment]').forEach(button => button.addEventListener('click', () => { syncBasicFields(); syncAssignments(); const desk = draft.cashDesks.find(item => item.id === button.dataset.addAssignment); desk.assignments.push({ id:uid('assignment'), person:'', from:'', to:'' }); renderEditor(); }));
-    node.querySelectorAll('[data-remove-assignment]').forEach(button => button.addEventListener('click', () => { syncBasicFields(); syncAssignments(); const desk = draft.cashDesks.find(item => item.id === expandedCashId); desk.assignments.splice(Number(button.dataset.removeAssignment), 1); renderEditor(); }));
-    node.querySelectorAll('[data-assignment-person],[data-assignment-from],[data-assignment-to]').forEach(input => input.addEventListener('input', syncAssignments));
-    node.querySelector('[data-delete-event]')?.addEventListener('click', () => confirmModal('Удалить мероприятие?','Конфигурация и чек-лист будут перемещены в корзину. Связанные записи и задачи останутся.','Удалить',async()=>{closeModal({immediate:true});await deleteEventWithUndo(draft.id);},true));
+    node.querySelectorAll('[data-cash-mode]').forEach(select => select.addEventListener('change', event => { syncBasicFields(); const desk = draft.cashDesks.find(item => item.id === select.dataset.cashMode); desk.mode = event.target.value; if (desk.mode !== 'closed') draft.systems.offlineSales = true; renderEditor(); draftController?.schedule(); }));
+    node.querySelectorAll('[data-add-assignment]').forEach(button => button.addEventListener('click', () => { syncBasicFields(); syncAssignments(); const desk = draft.cashDesks.find(item => item.id === button.dataset.addAssignment); desk.assignments.push({ id:uid('assignment'), person:'', from:'', to:'' }); renderEditor(); draftController?.schedule(); }));
+    node.querySelectorAll('[data-remove-assignment]').forEach(button => button.addEventListener('click', () => { syncBasicFields(); syncAssignments(); const desk = draft.cashDesks.find(item => item.id === expandedCashId); desk.assignments.splice(Number(button.dataset.removeAssignment), 1); renderEditor(); draftController?.schedule(); }));
+    node.querySelectorAll('[data-assignment-person],[data-assignment-from],[data-assignment-to]').forEach(input => input.addEventListener('input', () => { syncAssignments(); draftController?.schedule(); }));
+    node.querySelector('[data-delete-event]')?.addEventListener('click', () => confirmModal('Удалить мероприятие?','Конфигурация и чек-лист будут перемещены в корзину. Связанные записи и задачи останутся.','Удалить',async()=>{await draftController?.clear();closeModal({immediate:true});await deleteEventWithUndo(draft.id);},true));
   }
 
   function syncAssignments() {
@@ -276,12 +289,21 @@ function openEventEditor(initialDraft, isExisting) {
       updatedAt: nowISO(),
     });
     await dbPut('events', draft);
+    await draftController?.clear();
     closeModal();
     toast(isExisting ? 'Мероприятие обновлено' : 'Мероприятие создано');
     await render();
   });
 
   renderEditor();
+  draftController = attachDraftAutosave(node, {
+    type:'event',
+    entityId:isExisting ? draft.id : '',
+    restored:restoredDraft,
+    formSelector:'#eventForm',
+    snapshot:()=>{ syncBasicFields(false); syncAssignments(); return { event:BpsEventLogic.normalizeEvent(draft) }; },
+    restore:()=>{},
+  });
   return node;
 }
 
@@ -291,6 +313,7 @@ function checklistStatusButton(item, status) {
 
 function openEventDetail(id) {
   const event = getEventById(id); if (!event) return;
+  rememberRecent('events',event.id,event.name);
   event.checklist = BpsEventLogic.generateChecklist(event, event.checklist);
   const node = openModal('Мероприятие', '', { actionHtml:'<button class="text-button" id="editEventTop">Изменить</button>' });
   const body = node.querySelector('.modal-body');
@@ -298,21 +321,28 @@ function openEventDetail(id) {
   const renderDetail = () => {
     const focusMarker = captureEventFocus(node);
     const readiness = BpsEventLogic.calculateReadiness(event);
+    const blockers = BpsEventLogic.readinessBlockers(event);
     const summary = BpsEventLogic.summarizeConfiguration(event);
     const linkedEntries = state.data.entries.filter(item => item.eventId === event.id);
     const linkedTasks = state.data.tasks.filter(item => item.eventId === event.id);
     const groups = event.checklist.reduce((acc, item) => ((acc[item.group] ||= []).push(item), acc), {});
+    const snapshots = [...(event.readinessHistory || [])].sort((a,b)=>new Date(b.at)-new Date(a.at));
+    const latestSnapshot = snapshots[0] || null;
+    const previousSnapshot = snapshots[1] || null;
+    const comparison = latestSnapshot && previousSnapshot ? latestSnapshot.percent - previousSnapshot.percent : null;
     body.innerHTML = `<section class="event-detail-hero">
       <div class="event-detail-title"><span class="status-pill ${eventStatusTone(event.status)}">${EVENT_STATUS_LABELS[event.status]}</span><h3>${esc(event.name)}</h3><p>${formatFullDate(event.date)}${event.doorsOpenAt?` · входы ${esc(event.doorsOpenAt)}`:''}</p></div>
       <div class="readiness-large"><div class="readiness-ring large ${readiness.tone}" style="--progress:${readiness.percent}"><b>${readiness.percent}</b><small>%</small></div><span><strong>${esc(readiness.label)}</strong><small>${readiness.completed} из ${readiness.total} пунктов обработано</small></span></div>
     </section>
+    <section class="modal-section readiness-verification"><div class="detail-list"><div><span>Последняя проверка</span><strong>${event.verifiedAt?`${formatFullDate(event.verifiedAt)} · ${esc(event.verifiedBy||'Инженер')}`:'Ещё не зафиксирована'}</strong></div>${comparison!==null?`<div><span>К предыдущей проверке</span><strong class="${comparison>0?'status-text success':comparison<0?'status-text danger':''}">${comparison>0?'+':''}${comparison} п. п.</strong></div>`:''}</div><button class="button full spaced-top" id="recordEventVerification">${icon('check')}Зафиксировать проверку</button></section>
+    ${blockers.length?`<section class="modal-section"><div class="inline-message ${readiness.tone==='danger'?'danger':'warning'}">${icon('alert')}<span><strong>Почему мероприятие не готово</strong><small>${blockers.length} ${plural(blockers.length,'блокирующий пункт','блокирующих пункта','блокирующих пунктов')}</small></span></div><div class="blocker-list">${blockers.slice(0,8).map(item=>`<div><span class="status-pill ${item.status==='failed'?'danger':'warning'}">${esc(item.reason)}</span><strong>${esc(item.title)}</strong><small>${esc(item.group)}</small></div>`).join('')}</div></section>`:''}
     <section class="event-summary-grid"><div><b>${summary.activeGates}</b><span>Гейты</span></div><div><b>${summary.activeTurnstiles}</b><span>Турникеты</span></div><div><b>${summary.activeCashDesks}</b><span>Кассы</span></div><div><b>${summary.assignments}</b><span>Кассиры</span></div></section>
     <section class="modal-section"><h3 class="modal-section-title">Конфигурация</h3><div class="detail-list"><div><span>Системы</span><strong>${esc(eventSystemSummary(event))}</strong></div>${event.gates.filter(g=>g.status!=='not_requested').map(g=>`<div><span>${esc(g.name)}</span><strong>${esc(BpsEventLogic.GATE_STATUSES.find(item=>item.value===g.status)?.label||g.status)} · ${g.turnstiles.filter(t=>t.mode==='active').length} раб.</strong></div>`).join('')}</div></section>
     <section class="modal-section"><div class="section-head"><div><h3 class="modal-section-title">Чек-лист готовности</h3><p class="section-subtitle">Неиспользуемые ресурсы не входят в расчёт</p></div><span class="count-badge">${event.checklist.length}</span></div>
       <div class="checklist-groups">${Object.entries(groups).map(([group, items])=>`<div class="checklist-group"><h4>${esc(group)}</h4>${items.map(item=>`<div class="event-check-row ${item.critical?'critical':''}"><span><strong>${esc(item.title)}</strong>${item.critical?'<small>Критический пункт</small>':''}</span><div class="check-status-actions">${['pending','ok','issue','failed','na'].map(status=>checklistStatusButton(item,status)).join('')}</div></div>`).join('')}</div>`).join('')}</div>
     </section>
     <section class="modal-section"><h3 class="modal-section-title">Связанные данные</h3><div class="detail-list"><div><span>Записи журнала</span><strong>${linkedEntries.length}</strong></div><div><span>Задачи</span><strong>${linkedTasks.length}</strong></div></div><div class="button-row"><button class="button" data-new-linked="entry">${icon('journal')}Запись</button><button class="button" data-new-linked="task">${icon('task')}Задача</button></div></section>
-    ${window.knowledgeLinkedArticlesHtml?.(null,event.id)||''}
+    ${relatedEntitiesHtml('events',event.id)}
     <section class="modal-section"><div class="button-row"><button class="button" id="duplicateEvent">${icon('copy')}Копировать</button><button class="button" id="advanceEventStatus">${icon('clock')}${event.status==='planned'?'Начать подготовку':event.status==='preparing'?'Открыть режим проведения':event.status==='live'?'Завершить':'Вернуть в план'}</button></div></section>`;
     bindDetail();
     restoreEventFocus(node, focusMarker);
@@ -332,15 +362,24 @@ function openEventDetail(id) {
     body.querySelectorAll('[data-kb-action="open-article"]').forEach(button=>button.addEventListener('click',()=>{const articleId=button.dataset.id;closeModal({immediate:true});openKnowledgeArticleDetail(articleId);}));
     bindSwipeRows(body);
     body.querySelector('#duplicateEvent')?.addEventListener('click', () => { closeModal({immediate:true}); duplicateEvent(event); });
+    body.querySelector('#recordEventVerification')?.addEventListener('click', async () => {
+      const verified = BpsEventLogic.recordReadinessSnapshot(event, state.preferences.operatorName || 'Инженер', nowISO());
+      Object.assign(event, verified);
+      await dbPut('events', event);
+      toast('Проверка готовности зафиксирована');
+      renderDetail();
+    });
     body.querySelector('#advanceEventStatus')?.addEventListener('click', async () => {
+      const previous = event.status;
       const next = { planned:'preparing', preparing:'live', live:'completed', completed:'planned' }[event.status];
       event.status = next;
       event.updatedAt = nowISO();
       await dbPut('events', event);
-      toast(`Статус: ${EVENT_STATUS_LABELS[next]}`);
+      toast(`Статус: ${EVENT_STATUS_LABELS[next]}`,{actionText:'Отменить',duration:6500,onAction:async()=>{event.status=previous;event.updatedAt=nowISO();await dbPut('events',event);renderDetail();await refreshData();}});
       renderDetail();
       await refreshData();
     });
+    bindRelatedEntityLinks(body);
   };
 
   node.querySelector('#editEventTop').addEventListener('click', () => { closeModal({immediate:true}); openEventForm(event); });
@@ -357,6 +396,9 @@ async function duplicateEvent(source) {
   copy.date = date.toISOString();
   copy.checklist = BpsEventLogic.generateChecklist(copy).map(item => ({ ...item, status:'pending', note:'' }));
   copy.configurationChanges = [];
+  copy.verifiedAt = null;
+  copy.verifiedBy = '';
+  copy.readinessHistory = [];
   copy.createdAt = nowISO();
   copy.updatedAt = nowISO();
   await dbPut('events', copy);
@@ -364,3 +406,20 @@ async function duplicateEvent(source) {
   await render();
   openEventDetail(copy.id);
 }
+
+function bindEventPageEvents(main) {
+  if (state.route !== 'events') return;
+  const search = main.querySelector('#eventSearch');
+  search?.addEventListener('input', debounce(async () => {
+    state.events.query = search.value;
+    await setSetting('filter:events', state.events);
+    await render();
+    document.querySelector('#eventSearch')?.focus({ preventScroll:true });
+  }, 160));
+  main.querySelectorAll('[data-event-filter]').forEach(button => button.addEventListener('click', async () => {
+    state.events.status = button.dataset.eventFilter;
+    await setSetting('filter:events', state.events);
+    await render();
+  }));
+}
+window.bindEventPageEvents = bindEventPageEvents;

@@ -118,4 +118,28 @@ function setGate(e, gateId, status, active=[], reserve=[]) {
   assert.equal(summary.assignments,3);
 })();
 
-console.log('event-logic: 9 сценариев пройдены');
+(function blockersExplainReadiness() {
+  const e=event('blank');
+  setGate(e,'kpp1','partial',[1]);
+  e.checklist=logic.generateChecklist(e);
+  e.checklist.forEach(item=>item.status='ok');
+  const reader=e.checklist.find(item=>item.key.endsWith(':reader'));
+  reader.status='failed';
+  const blockers=logic.readinessBlockers(e);
+  assert.equal(blockers.length,1);
+  assert.equal(blockers[0].reason,'Неисправность');
+})();
+
+(function readinessSnapshotsKeepAuthorAndHistory() {
+  const e=event('blank');
+  e.checklist=logic.generateChecklist(e);
+  e.checklist.forEach(item=>item.status='ok');
+  const first=logic.recordReadinessSnapshot(e,'Артём','2026-08-01T10:00:00.000Z');
+  const second=logic.recordReadinessSnapshot(first,'Инженер','2026-08-01T11:00:00.000Z');
+  assert.equal(second.verifiedBy,'Инженер');
+  assert.equal(second.verifiedAt,'2026-08-01T11:00:00.000Z');
+  assert.equal(second.readinessHistory.length,2);
+  assert.equal(second.readinessHistory[0].author,'Артём');
+})();
+
+console.log('event-logic: 11 сценариев пройдены');

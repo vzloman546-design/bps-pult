@@ -5,7 +5,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const EVENT_SCHEMA_VERSION = 1;
+  const EVENT_SCHEMA_VERSION = 2;
 
   const GATE_STATUSES = [
     { value: 'active', label: 'Открыт' },
@@ -134,6 +134,9 @@
       })),
       checklist: [],
       configurationChanges: [],
+      verifiedAt: overrides.verifiedAt || null,
+      verifiedBy: overrides.verifiedBy || '',
+      readinessHistory: Array.isArray(overrides.readinessHistory) ? clone(overrides.readinessHistory).slice(-20) : [],
       createdAt: overrides.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -180,6 +183,7 @@
     });
     base.checklist = Array.isArray(input && input.checklist) ? clone(input.checklist) : [];
     base.configurationChanges = Array.isArray(input && input.configurationChanges) ? clone(input.configurationChanges) : [];
+    base.readinessHistory = Array.isArray(input && input.readinessHistory) ? clone(input.readinessHistory).slice(-20) : [];
     return base;
   }
 
@@ -207,6 +211,9 @@
       cashDesks: [],
       checklist: [],
       configurationChanges: [],
+      verifiedAt: input.verifiedAt || null,
+      verifiedBy: String(input.verifiedBy || ''),
+      readinessHistory: Array.isArray(input.readinessHistory) ? clone(input.readinessHistory).slice(-20) : [],
       createdAt: input.createdAt || new Date().toISOString(),
       updatedAt: input.updatedAt || new Date().toISOString(),
     };
@@ -351,6 +358,47 @@
     return { activeGates: activeGates.length, reserveGates: reserveGates.length, activeTurnstiles, reserveTurnstiles, activeCashDesks, assignments };
   }
 
+  function readinessBlockers(eventInput) {
+    const checklist = Array.isArray(eventInput?.checklist) && eventInput.checklist.length
+      ? eventInput.checklist
+      : generateChecklist(eventInput);
+    return checklist
+      .filter(item => item.required !== false && item.status !== 'na' && (
+        item.status === 'failed' ||
+        item.status === 'issue' ||
+        (item.critical && item.status === 'pending')
+      ))
+      .map(item => ({
+        key: item.key || item.id,
+        title: item.title,
+        group: item.group,
+        status: item.status,
+        critical: Boolean(item.critical),
+        reason: item.status === 'failed'
+          ? 'Неисправность'
+          : item.status === 'issue'
+            ? 'Замечание'
+            : 'Критический пункт не проверен',
+      }));
+  }
+
+  function recordReadinessSnapshot(eventInput, author = '', at = new Date().toISOString()) {
+    const event = normalizeEvent(eventInput);
+    const readiness = calculateReadiness(event);
+    const snapshot = {
+      id: `readiness_${new Date(at).getTime()}_${Math.random().toString(36).slice(2, 7)}`,
+      at,
+      author: String(author || ''),
+      percent: readiness.percent,
+      label: readiness.label,
+      blockers: readinessBlockers(event).length,
+    };
+    event.verifiedAt = at;
+    event.verifiedBy = snapshot.author;
+    event.readinessHistory = [...event.readinessHistory, snapshot].slice(-20);
+    return event;
+  }
+
   function validateEvent(eventInput) {
     const event = normalizeEvent(eventInput);
     const errors = [];
@@ -380,6 +428,8 @@
     normalizeEvent,
     generateChecklist,
     calculateReadiness,
+    readinessBlockers,
+    recordReadinessSnapshot,
     summarizeConfiguration,
     validateEvent,
   };
