@@ -3,7 +3,7 @@ const VERSION = '2.5.1';
 const CACHE = `bps-pult-${VERSION}`;
 const APP_SHELL = [
   './', './index.html', './styles.css', './stability-logic.js', './event-logic.js', './knowledge-logic.js', './productivity-logic.js',
-  './app.js', './event-ui.js', './knowledge-ui.js', './manifest.webmanifest',
+  './app.js', "./push-notifications.js", './event-ui.js', './knowledge-ui.js', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './apple-touch-icon.png',
   './icon-192-dark.png', './icon-512-dark.png', './apple-touch-icon-dark.png',
   './icon-192-light.png', './icon-512-light.png', './apple-touch-icon-light.png',
@@ -52,5 +52,60 @@ self.addEventListener('fetch', event => {
       if (response.ok) await cache.put(event.request, response.clone());
       return response;
     })
+  );
+});
+
+self.addEventListener("push", (event) => {
+  let data = {};
+
+  try {
+    data = event.data?.json() || {};
+  } catch {
+    data = {
+      title: "БПС Пульт",
+      body: event.data?.text() || "Есть новое рабочее напоминание.",
+    };
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(data.title || "БПС Пульт", {
+      body: data.body || "",
+      icon: "./icon-192.png",
+      badge: "./icon-192.png",
+      tag: data.tag || "bps-pult",
+      renotify: true,
+      data: {
+        url: data.url || "./",
+      },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const targetUrl = new URL(
+    event.notification.data?.url || "./",
+    self.registration.scope,
+  ).href;
+
+  event.waitUntil(
+    clients
+      .matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      })
+      .then(async (windowClients) => {
+        const existing = windowClients.find((client) =>
+          client.url.startsWith(self.registration.scope),
+        );
+
+        if (existing) {
+          if ("navigate" in existing) await existing.navigate(targetUrl);
+          return existing.focus();
+        }
+
+        return clients.openWindow(targetUrl);
+      }),
   );
 });
