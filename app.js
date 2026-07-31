@@ -1,10 +1,10 @@
 'use strict';
 
-const APP_VERSION = '1.3.0';
-const SCHEMA_VERSION = 1;
+const APP_VERSION = '2.0.0-alpha.1';
+const SCHEMA_VERSION = 2;
 const DB_NAME = 'bps-pult-local';
-const DB_VERSION = 1;
-const STORE_NAMES = ['entries', 'tasks', 'inspections', 'equipment', 'settings'];
+const DB_VERSION = 2;
+const STORE_NAMES = ['entries', 'tasks', 'inspections', 'equipment', 'events', 'settings'];
 
 const ENTRY_TYPES = [
   'Неисправность', 'Выполненная работа', 'Наблюдение', 'Обращение кассира',
@@ -24,7 +24,7 @@ const state = {
   route: 'today',
   journal: { query: '', type: 'Все типы', object: 'Все объекты', status: 'Все статусы', period: 'Все даты' },
   taskFilter: 'Открытые',
-  data: { entries: [], tasks: [], inspections: [], equipment: [] },
+  data: { entries: [], tasks: [], inspections: [], equipment: [], events: [] },
 };
 
 const interactionState = { modalClosing: false, openSwipeRow: null };
@@ -143,6 +143,11 @@ function openDatabase() {
         store.createIndex('date', 'date');
       }
       if (!db.objectStoreNames.contains('equipment')) db.createObjectStore('equipment', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('events')) {
+        const store = db.createObjectStore('events', { keyPath: 'id' });
+        store.createIndex('date', 'date');
+        store.createIndex('status', 'status');
+      }
       if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
     };
     request.onsuccess = () => resolve(request.result);
@@ -175,7 +180,7 @@ async function getSetting(key, fallback = null) { const v = await dbGet('setting
 async function setSetting(key, value) { await dbPut('settings', { key, value }); }
 
 async function refreshData() {
-  const [entries, tasks, inspections, equipment] = await Promise.all(['entries','tasks','inspections','equipment'].map(dbGetAll));
+  const [entries, tasks, inspections, equipment, events] = await Promise.all(['entries','tasks','inspections','equipment','events'].map(dbGetAll));
   state.data.entries = entries.sort((a,b) => new Date(b.date) - new Date(a.date));
   state.data.tasks = tasks.sort((a,b) => {
     if (a.completed !== b.completed) return Number(a.completed) - Number(b.completed);
@@ -183,6 +188,7 @@ async function refreshData() {
   });
   state.data.inspections = inspections.sort((a,b) => new Date(b.date) - new Date(a.date));
   state.data.equipment = equipment.sort((a,b) => a.name.localeCompare(b.name, 'ru'));
+  state.data.events = events.sort((a,b) => new Date(a.date || 0) - new Date(b.date || 0));
 }
 
 function toast(message) {
@@ -224,7 +230,7 @@ function updateOnlineStatus() {
 
 const routeTitles = {
   today: 'Сегодня', journal: 'Журнал', inspections: 'Техосмотры', more: 'Ещё',
-  tasks: 'Задачи', equipment: 'Оборудование', report: 'Итоги дня', settings: 'Настройки', install: 'Как установить'
+  tasks: 'Задачи', events: 'Мероприятия', equipment: 'Оборудование', report: 'Итоги дня', settings: 'Настройки', install: 'Как установить'
 };
 function go(route) {
   location.hash = route;
@@ -234,7 +240,7 @@ function currentRoute() {
   return routeTitles[value] ? value : 'today';
 }
 function updateNav() {
-  document.querySelectorAll('.nav-button').forEach(btn => btn.classList.toggle('active', btn.dataset.route === state.route || (btn.dataset.route === 'more' && ['tasks','equipment','report','settings','install'].includes(state.route))));
+  document.querySelectorAll('.nav-button').forEach(btn => btn.classList.toggle('active', btn.dataset.route === state.route || (btn.dataset.route === 'more' && ['tasks','events','equipment','report','settings','install'].includes(state.route))));
 }
 
 async function render() {
@@ -246,7 +252,7 @@ async function render() {
   const main = document.getElementById('appMain');
   const pages = {
     today: renderToday, journal: renderJournal, inspections: renderInspections, more: renderMore,
-    tasks: renderTasks, equipment: renderEquipment, report: renderReport, settings: renderSettings, install: renderInstall
+    tasks: renderTasks, events: renderEvents, equipment: renderEquipment, report: renderReport, settings: renderSettings, install: renderInstall
   };
   const update = async () => {
     main.classList.remove('page-ready');
@@ -273,6 +279,7 @@ function swipeActionsFor(action, id) {
   if (action === 'task-detail') return `<button class="swipe-action complete" data-gesture-action="toggle-task" data-id="${safeId}">${icon('check')}<span>Готово</span></button><button class="swipe-action edit" data-gesture-action="edit-task" data-id="${safeId}">${icon('edit')}<span>Изменить</span></button>`;
   if (action === 'inspection-detail') return `<button class="swipe-action edit" data-gesture-action="edit-inspection" data-id="${safeId}">${icon('edit')}<span>Изменить</span></button><button class="swipe-action delete" data-gesture-action="delete-inspection" data-id="${safeId}">${icon('trash')}<span>Удалить</span></button>`;
   if (action === 'equipment-detail') return `<button class="swipe-action edit" data-gesture-action="edit-equipment" data-id="${safeId}">${icon('edit')}<span>Изменить</span></button><button class="swipe-action delete" data-gesture-action="delete-equipment" data-id="${safeId}">${icon('trash')}<span>Удалить</span></button>`;
+  if (action === 'event-detail') return `<button class="swipe-action edit" data-gesture-action="edit-event" data-id="${safeId}">${icon('edit')}<span>Изменить</span></button><button class="swipe-action delete" data-gesture-action="delete-event" data-id="${safeId}">${icon('trash')}<span>Удалить</span></button>`;
   return '';
 }
 function swipeRow(content, action, id) {
@@ -309,6 +316,7 @@ async function renderToday() {
       <div class="local-state">${icon('database')} Данные хранятся только на этом iPhone</div>
     </section>
     ${install}
+    ${renderNextEventSection()}
     <section class="section">
       <div class="status-strip" aria-label="Сводка">
         <button class="status-cell" data-route-link="tasks"><strong>${open.length}</strong><span>Задачи</span></button>
@@ -423,6 +431,7 @@ function renderInspections() {
 function renderMore() {
   const open = state.data.tasks.filter(t=>!t.completed).length;
   return `<section class="section"><div class="list-card">
+    ${listRow({id:'events',action:'route',iconName:'calendar',title:'Мероприятия',meta:'Гибкая схема гейтов, турникетов, СИБ и касс',side:state.data.events.length?`${state.data.events.length}`:''})}
     ${listRow({id:'tasks',action:'route',iconName:'task',title:'Задачи',meta:'Сроки, приоритеты и выполненные работы',side:open?`<span class="status-pill info">${open}</span>`:''})}
     ${listRow({id:'equipment',action:'route',iconName:'equipment',title:'Оборудование',meta:'Локальный реестр турникетов, касс и серверов',side:`${state.data.equipment.length}`})}
     ${listRow({id:'report',action:'route',iconName:'report',title:'Итоги дня',meta:'Готовая хронология для отчёта'})}
@@ -626,15 +635,16 @@ async function handlePhotoFiles(files, photos, rerender) {
 function openEntryForm(existing = null) {
   const photos = [...(existing?.photos || [])];
   const body = `<form id="entryForm">
+    ${eventSelectField(existing?.eventId)}
     <div class="form-grid two"><div class="field"><label class="required" for="entryType">Тип</label><select id="entryType" required>${optionsHtml(ENTRY_TYPES,existing?.type||'Неисправность')}</select></div><div class="field"><label class="required" for="entryObject">Объект</label><select id="entryObject" required>${optionsHtml(OBJECTS,existing?.object||'КПП-1')}</select></div></div>
     <div class="field"><label for="entryEquipment">Оборудование или рабочее место</label><input id="entryEquipment" value="${esc(existing?.equipment||'')}" placeholder="Например: турникет №3"></div>
     <div class="field"><label class="required" for="entryDescription">Описание</label><textarea id="entryDescription" required placeholder="Что произошло и что было сделано">${esc(existing?.description||'')}</textarea><div class="field-help">Можно использовать диктовку клавиатуры iPhone.</div></div>
     <div class="form-grid two"><div class="field"><label class="required" for="entryStatus">Статус</label><select id="entryStatus" required>${optionsHtml(ENTRY_STATUSES,existing?.status||'Информация')}</select></div><div class="field"><label class="required" for="entryDate">Дата и время</label><input id="entryDate" type="datetime-local" required value="${localDateTimeValue(existing?.date?new Date(existing.date):new Date())}"></div></div>
     <div class="field"><label>Фотографии</label><div id="entryPhotos">${photoPickerHtml(photos)}</div></div>
-    ${!existing?`<div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Создать связанную задачу</strong><span>Напомнить о повторной проверке</span></div><button type="button" class="switch" id="linkedTaskSwitch" aria-label="Создать задачу"></button></div><div id="linkedTaskFields" hidden><div class="form-grid two nested-grid"><div class="field"><label for="linkedDue">Срок</label><input type="datetime-local" id="linkedDue"></div><div class="field"><label for="linkedPriority">Приоритет</label><select id="linkedPriority">${optionsHtml(PRIORITIES,'Обычный')}</select></div></div></div></div>`:''}
-    ${existing?`<button type="button" class="button danger full" data-delete-entry="${esc(existing.id)}">${icon('trash')}Удалить запись</button>`:''}
+    ${!existing?.id?`<div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Создать связанную задачу</strong><span>Напомнить о повторной проверке</span></div><button type="button" class="switch" id="linkedTaskSwitch" aria-label="Создать задачу"></button></div><div id="linkedTaskFields" hidden><div class="form-grid two nested-grid"><div class="field"><label for="linkedDue">Срок</label><input type="datetime-local" id="linkedDue"></div><div class="field"><label for="linkedPriority">Приоритет</label><select id="linkedPriority">${optionsHtml(PRIORITIES,'Обычный')}</select></div></div></div></div>`:''}
+    ${existing?.id?`<button type="button" class="button danger full" data-delete-entry="${esc(existing.id)}">${icon('trash')}Удалить запись</button>`:''}
   </form>`;
-  const node = openModal(existing?'Редактировать запись':'Новое событие', body, { actionHtml:'<button class="text-button" id="saveEntry">Сохранить</button>' });
+  const node = openModal(existing?.id?'Редактировать запись':'Новая запись', body, { actionHtml:'<button class="text-button" id="saveEntry">Сохранить</button>' });
   const renderPhotos = () => {
     node.querySelector('#entryPhotos').innerHTML = photoPickerHtml(photos);
     const input=node.querySelector('#photoInput'); if(input) input.addEventListener('change',e=>handlePhotoFiles(e.target.files,photos,renderPhotos));
@@ -648,14 +658,14 @@ function openEntryForm(existing = null) {
     const record={
       id:existing?.id||uid('entry'), type:node.querySelector('#entryType').value, object:node.querySelector('#entryObject').value,
       equipment:node.querySelector('#entryEquipment').value.trim(), description:node.querySelector('#entryDescription').value.trim(),
-      status:node.querySelector('#entryStatus').value, date:new Date(node.querySelector('#entryDate').value).toISOString(), photos,
+      status:node.querySelector('#entryStatus').value, date:new Date(node.querySelector('#entryDate').value).toISOString(), eventId:node.querySelector('#linkedEvent')?.value||null, photos,
       createdAt:existing?.createdAt||nowISO(), updatedAt:nowISO(), sample:existing?.sample||false
     };
     await dbPut('entries',record);
-    if(!existing && sw?.classList.contains('on')) {
-      await dbPut('tasks',{id:uid('task'),title:`${record.object}${record.equipment?` · ${record.equipment}`:''}: ${record.status}`,object:record.object,description:record.description,dueAt:node.querySelector('#linkedDue').value?new Date(node.querySelector('#linkedDue').value).toISOString():null,priority:node.querySelector('#linkedPriority').value,completed:false,linkedEntryId:record.id,createdAt:nowISO(),updatedAt:nowISO()});
+    if(!existing?.id && sw?.classList.contains('on')) {
+      await dbPut('tasks',{id:uid('task'),title:`${record.object}${record.equipment?` · ${record.equipment}`:''}: ${record.status}`,object:record.object,description:record.description,dueAt:node.querySelector('#linkedDue').value?new Date(node.querySelector('#linkedDue').value).toISOString():null,priority:node.querySelector('#linkedPriority').value,completed:false,eventId:record.eventId||null,linkedEntryId:record.id,createdAt:nowISO(),updatedAt:nowISO()});
     }
-    closeModal();toast(existing?'Запись обновлена':'Запись сохранена');await render();
+    closeModal();toast(existing?.id?'Запись обновлена':'Запись сохранена');await render();
   });
   node.querySelector('[data-delete-entry]')?.addEventListener('click',()=>confirmModal('Удалить запись?','Фотографии и связанные данные записи будут удалены.','Удалить',async()=>{await dbDelete('entries',existing.id);closeModal();toast('Запись удалена');await render();},true));
 }
@@ -665,16 +675,16 @@ function openEntryDetail(id) {
   const photos=e.photos||[];
   const node=openModal('Запись журнала',`<div class="detail-hero"><span class="status-pill ${statusTone(e.status)}">${esc(e.status)}</span><h3 class="detail-title">${esc(e.equipment||e.type)}</h3><div class="detail-meta">${esc(e.object)} · ${formatFullDate(e.date)}</div><div class="detail-grid"><div class="detail-field"><div class="detail-field-label">Тип</div><div class="detail-field-value">${esc(e.type)}</div></div><div class="detail-field"><div class="detail-field-label">Описание</div><div class="detail-field-value">${nl2br(e.description)}</div></div></div></div>${photos.length?`<div class="modal-section"><h3 class="modal-section-title">Фотографии</h3><div class="photo-gallery">${photos.map(p=>`<img src="${p}" alt="Фото записи">`).join('')}</div></div>`:''}<div class="button-row"><button class="button" id="editEntry">${icon('edit')}Редактировать</button><button class="button" id="taskFromEntry">${icon('task')}Создать задачу</button></div>`);
   node.querySelector('#editEntry').addEventListener('click',()=>{closeModal();openEntryForm(e);});
-  node.querySelector('#taskFromEntry').addEventListener('click',()=>{closeModal();openTaskForm({object:e.object,description:e.description,linkedEntryId:e.id,title:`${e.equipment||e.type}: ${e.status}`});});
+  node.querySelector('#taskFromEntry').addEventListener('click',()=>{closeModal();openTaskForm({object:e.object,description:e.description,eventId:e.eventId||null,linkedEntryId:e.id,title:`${e.equipment||e.type}: ${e.status}`});});
 }
 
 function openTaskForm(existing = null) {
   const preset=existing||{};
-  const body=`<form id="taskForm"><div class="field"><label class="required" for="taskTitle">Название</label><input id="taskTitle" required value="${esc(preset.title||'')}" placeholder="Что нужно сделать"></div><div class="form-grid two"><div class="field"><label for="taskObject">Объект</label><select id="taskObject"><option value="">Без объекта</option>${optionsHtml(OBJECTS,preset.object||'')}</select></div><div class="field"><label for="taskPriority">Приоритет</label><select id="taskPriority">${optionsHtml(PRIORITIES,preset.priority||'Обычный')}</select></div></div><div class="field"><label for="taskDue">Срок</label><input id="taskDue" type="datetime-local" value="${preset.dueAt?localDateTimeValue(new Date(preset.dueAt)):''}"></div><div class="field"><label for="taskDescription">Подробности</label><textarea id="taskDescription" placeholder="Дополнительная информация">${esc(preset.description||'')}</textarea></div>${preset.id?`<button type="button" class="button danger full" data-delete-task="${esc(preset.id)}">${icon('trash')}Удалить задачу</button>`:''}</form>`;
+  const body=`<form id="taskForm">${eventSelectField(preset.eventId)}<div class="field"><label class="required" for="taskTitle">Название</label><input id="taskTitle" required value="${esc(preset.title||'')}" placeholder="Что нужно сделать"></div><div class="form-grid two"><div class="field"><label for="taskObject">Объект</label><select id="taskObject"><option value="">Без объекта</option>${optionsHtml(OBJECTS,preset.object||'')}</select></div><div class="field"><label for="taskPriority">Приоритет</label><select id="taskPriority">${optionsHtml(PRIORITIES,preset.priority||'Обычный')}</select></div></div><div class="field"><label for="taskDue">Срок</label><input id="taskDue" type="datetime-local" value="${preset.dueAt?localDateTimeValue(new Date(preset.dueAt)):''}"></div><div class="field"><label for="taskDescription">Подробности</label><textarea id="taskDescription" placeholder="Дополнительная информация">${esc(preset.description||'')}</textarea></div>${preset.id?`<button type="button" class="button danger full" data-delete-task="${esc(preset.id)}">${icon('trash')}Удалить задачу</button>`:''}</form>`;
   const node=openModal(preset.id?'Редактировать задачу':'Новая задача',body,{actionHtml:'<button class="text-button" id="saveTask">Сохранить</button>'});
   node.querySelector('#saveTask').addEventListener('click',async()=>{
     const form=node.querySelector('#taskForm');if(!form.reportValidity())return;
-    await dbPut('tasks',{id:preset.id||uid('task'),title:node.querySelector('#taskTitle').value.trim(),object:node.querySelector('#taskObject').value,priority:node.querySelector('#taskPriority').value,dueAt:node.querySelector('#taskDue').value?new Date(node.querySelector('#taskDue').value).toISOString():null,description:node.querySelector('#taskDescription').value.trim(),completed:preset.completed||false,completedAt:preset.completedAt||null,linkedEntryId:preset.linkedEntryId||null,createdAt:preset.createdAt||nowISO(),updatedAt:nowISO(),sample:preset.sample||false});
+    await dbPut('tasks',{id:preset.id||uid('task'),title:node.querySelector('#taskTitle').value.trim(),object:node.querySelector('#taskObject').value,priority:node.querySelector('#taskPriority').value,dueAt:node.querySelector('#taskDue').value?new Date(node.querySelector('#taskDue').value).toISOString():null,description:node.querySelector('#taskDescription').value.trim(),completed:preset.completed||false,completedAt:preset.completedAt||null,eventId:node.querySelector('#linkedEvent')?.value||null,linkedEntryId:preset.linkedEntryId||null,createdAt:preset.createdAt||nowISO(),updatedAt:nowISO(),sample:preset.sample||false});
     closeModal();toast(preset.id?'Задача обновлена':'Задача создана');await render();
   });
   node.querySelector('[data-delete-task]')?.addEventListener('click',()=>confirmModal('Удалить задачу?','Задача будет удалена без возможности восстановления.','Удалить',async()=>{await dbDelete('tasks',preset.id);closeModal();toast('Задача удалена');await render();},true));
@@ -690,17 +700,17 @@ function openInspectionForm(existing = null) {
   const photos=[...(existing?.photos||[])];
   const values=existing?.items?.map(x=>({...x}))||INSPECTION_ITEMS.map(name=>({name,status:'skip'}));
   const checklist=()=>`<div class="checklist">${values.map((item,i)=>`<div class="check-row"><div class="check-label">${esc(item.name)}</div><div class="check-options">${[['good','Исправно'],['issue','Замечание'],['skip','Не проверено']].map(([v,l])=>`<button type="button" class="check-option ${item.status===v?`active ${v}`:''}" data-check-index="${i}" data-check-value="${v}">${l}</button>`).join('')}</div></div>`).join('')}</div>`;
-  const body=`<form id="inspectionForm"><div class="form-grid two"><div class="field"><label class="required" for="inspectionObject">Объект</label><select id="inspectionObject" required>${optionsHtml(OBJECTS,existing?.object||'КПП-1')}</select></div><div class="field"><label class="required" for="inspectionDate">Дата и время</label><input id="inspectionDate" type="datetime-local" required value="${localDateTimeValue(existing?.date?new Date(existing.date):new Date())}"></div></div><div class="field"><label class="required" for="inspectionEquipment">Оборудование</label><input id="inspectionEquipment" required value="${esc(existing?.equipment||'')}" placeholder="Например: турникеты №1–8"></div><div class="field"><label>Чек-лист</label><div id="inspectionChecklist">${checklist()}</div></div><div class="field"><label for="inspectionConclusion">Заключение и замечания</label><textarea id="inspectionConclusion" placeholder="Опишите обнаруженные недостатки и выполненные действия">${esc(existing?.conclusion||'')}</textarea></div><div class="field"><label>Фотографии</label><div id="inspectionPhotos">${photoPickerHtml(photos)}</div></div><div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Создать задачу по замечаниям</strong><span>Доступно, если есть замечания</span></div><button type="button" class="switch" id="inspectionTaskSwitch"></button></div></div>${existing?`<button type="button" class="button danger full" data-delete-inspection="${esc(existing.id)}">${icon('trash')}Удалить осмотр</button>`:''}</form>`;
+  const body=`<form id="inspectionForm">${eventSelectField(existing?.eventId)}<div class="form-grid two"><div class="field"><label class="required" for="inspectionObject">Объект</label><select id="inspectionObject" required>${optionsHtml(OBJECTS,existing?.object||'КПП-1')}</select></div><div class="field"><label class="required" for="inspectionDate">Дата и время</label><input id="inspectionDate" type="datetime-local" required value="${localDateTimeValue(existing?.date?new Date(existing.date):new Date())}"></div></div><div class="field"><label class="required" for="inspectionEquipment">Оборудование</label><input id="inspectionEquipment" required value="${esc(existing?.equipment||'')}" placeholder="Например: турникеты №1–8"></div><div class="field"><label>Чек-лист</label><div id="inspectionChecklist">${checklist()}</div></div><div class="field"><label for="inspectionConclusion">Заключение и замечания</label><textarea id="inspectionConclusion" placeholder="Опишите обнаруженные недостатки и выполненные действия">${esc(existing?.conclusion||'')}</textarea></div><div class="field"><label>Фотографии</label><div id="inspectionPhotos">${photoPickerHtml(photos)}</div></div><div class="card toggle-card"><div class="toggle-row"><div class="toggle-copy"><strong>Создать задачу по замечаниям</strong><span>Доступно, если есть замечания</span></div><button type="button" class="switch" id="inspectionTaskSwitch"></button></div></div>${existing?`<button type="button" class="button danger full" data-delete-inspection="${esc(existing.id)}">${icon('trash')}Удалить осмотр</button>`:''}</form>`;
   const node=openModal(existing?'Редактировать осмотр':'Новый техосмотр',body,{actionHtml:'<button class="text-button" id="saveInspection">Сохранить</button>'});
   const bindChecks=()=>node.querySelectorAll('[data-check-index]').forEach(btn=>btn.addEventListener('click',()=>{values[Number(btn.dataset.checkIndex)].status=btn.dataset.checkValue;node.querySelector('#inspectionChecklist').innerHTML=checklist();bindChecks();}));bindChecks();
   const renderPhotos=()=>{node.querySelector('#inspectionPhotos').innerHTML=photoPickerHtml(photos);node.querySelector('#photoInput')?.addEventListener('change',e=>handlePhotoFiles(e.target.files,photos,renderPhotos));node.querySelectorAll('[data-remove-photo]').forEach(b=>b.addEventListener('click',()=>{photos.splice(Number(b.dataset.removePhoto),1);renderPhotos();}));};renderPhotos();
   const sw=node.querySelector('#inspectionTaskSwitch');sw.addEventListener('click',()=>sw.classList.toggle('on'));
   node.querySelector('#saveInspection').addEventListener('click',async()=>{
     const form=node.querySelector('#inspectionForm');if(!form.reportValidity())return;
-    const record={id:existing?.id||uid('inspection'),object:node.querySelector('#inspectionObject').value,equipment:node.querySelector('#inspectionEquipment').value.trim(),date:new Date(node.querySelector('#inspectionDate').value).toISOString(),items:values,conclusion:node.querySelector('#inspectionConclusion').value.trim(),photos,createdAt:existing?.createdAt||nowISO(),updatedAt:nowISO(),sample:existing?.sample||false};
+    const record={id:existing?.id||uid('inspection'),object:node.querySelector('#inspectionObject').value,equipment:node.querySelector('#inspectionEquipment').value.trim(),date:new Date(node.querySelector('#inspectionDate').value).toISOString(),eventId:node.querySelector('#linkedEvent')?.value||null,items:values,conclusion:node.querySelector('#inspectionConclusion').value.trim(),photos,createdAt:existing?.createdAt||nowISO(),updatedAt:nowISO(),sample:existing?.sample||false};
     await dbPut('inspections',record);
     const issues=values.filter(x=>x.status==='issue');
-    if(sw.classList.contains('on')&&issues.length) await dbPut('tasks',{id:uid('task'),title:`Устранить замечания: ${record.equipment}`,object:record.object,priority:'Важный',dueAt:null,description:`Замечания: ${issues.map(x=>x.name).join(', ')}.${record.conclusion?`\n${record.conclusion}`:''}`,completed:false,linkedInspectionId:record.id,createdAt:nowISO(),updatedAt:nowISO()});
+    if(sw.classList.contains('on')&&issues.length) await dbPut('tasks',{id:uid('task'),title:`Устранить замечания: ${record.equipment}`,object:record.object,priority:'Важный',dueAt:null,description:`Замечания: ${issues.map(x=>x.name).join(', ')}.${record.conclusion?`\n${record.conclusion}`:''}`,completed:false,eventId:record.eventId||null,linkedInspectionId:record.id,createdAt:nowISO(),updatedAt:nowISO()});
     closeModal();toast(existing?'Осмотр обновлён':'Техосмотр сохранён');await render();
   });
   node.querySelector('[data-delete-inspection]')?.addEventListener('click',()=>confirmModal('Удалить техосмотр?','Запись техосмотра и его фотографии будут удалены.','Удалить',async()=>{await dbDelete('inspections',existing.id);closeModal();toast('Осмотр удалён');await render();},true));
@@ -730,12 +740,13 @@ function openEquipmentDetail(id) {
 }
 
 async function exportData() {
-  const payload={app:'БПС Пульт',version:APP_VERSION,schemaVersion:SCHEMA_VERSION,exportedAt:nowISO(),data:{entries:await dbGetAll('entries'),tasks:await dbGetAll('tasks'),inspections:await dbGetAll('inspections'),equipment:await dbGetAll('equipment'),settings:await dbGetAll('settings')}};
+  const data = {}; for (const store of STORE_NAMES) data[store] = await dbGetAll(store);
+  const payload={app:'БПС Пульт',version:APP_VERSION,schemaVersion:SCHEMA_VERSION,exportedAt:nowISO(),data};
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`bps-pult-backup-${dayKey(new Date())}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Резервная копия создана');
 }
 async function importData(file) {
   const text=await file.text();let payload;try{payload=JSON.parse(text);}catch{throw new Error('Файл не является корректным JSON');}
-  if(payload.app!=='БПС Пульт'||payload.schemaVersion!==SCHEMA_VERSION||!payload.data)throw new Error('Неподдерживаемая резервная копия');
+  if(payload.app!=='БПС Пульт'||!payload.data||![1,2].includes(payload.schemaVersion))throw new Error('Неподдерживаемая резервная копия');
   for(const store of STORE_NAMES) await dbClear(store);
   for(const store of STORE_NAMES) for(const item of payload.data[store]||[]) await dbPut(store,item);
   toast('Данные восстановлены');await applyStoredTheme();await render();
@@ -755,16 +766,27 @@ async function addSamples() {
     equipment:[{id:'sample_equipment_1',name:'Турникет КПП-2 №3',type:'Турникет',object:'КПП-2',designation:'Т-23',status:'Требует внимания',ip:'192.168.2.13',serial:'',note:'Контролировать считыватель QR.',createdAt:nowISO(),updatedAt:nowISO(),sample:true}],
     inspections:[{id:'sample_inspection_1',object:'КПП-1',equipment:'Турникеты №1–8',date:yesterday.toISOString(),items:INSPECTION_ITEMS.map(name=>({name,status:'good'})),conclusion:'Нарушений не обнаружено.',photos:[],createdAt:nowISO(),updatedAt:nowISO(),sample:true}]
   };
+  const sampleEvent = BpsEventLogic.createEventFromTemplate('match-no-sib', BpsEventLogic.DEFAULT_RESOURCE_CATALOG, {
+    id:'sample_event_1', name:'Матч без СИБ — пример', type:'Матч', date:tomorrow.toISOString(), sample:true
+  });
+  const sampleGate = sampleEvent.gates.find(gate => gate.id === 'kpp1');
+  sampleGate.status = 'partial';
+  sampleGate.turnstiles.forEach((turnstile,index)=>turnstile.mode=index<4?'active':index===4?'reserve':'not_requested');
+  sampleEvent.cashDesks[0].mode='active';
+  sampleEvent.cashDesks[0].assignments=[{id:'sample_assignment_1',person:'Иванова А. В.',from:'15:00',to:'21:00'}];
+  sampleEvent.cashDesks[1].mode='closed';
+  sampleEvent.checklist=BpsEventLogic.generateChecklist(sampleEvent);
+  samples.events=[sampleEvent];
   for(const [store,items] of Object.entries(samples))for(const item of items)await dbPut(store,item);toast('Примеры добавлены');await render();
 }
 async function removeSamples() {
-  for(const store of ['entries','tasks','inspections','equipment']) { const all=await dbGetAll(store);for(const item of all.filter(x=>x.sample))await dbDelete(store,item.id); }
+  for(const store of ['entries','tasks','inspections','equipment','events']) { const all=await dbGetAll(store);for(const item of all.filter(x=>x.sample))await dbDelete(store,item.id); }
   toast('Примеры удалены');await render();
 }
 
 
 function openClearDataModal() {
-  const node = openModal('Удалить все данные', `<div class="warning-box spaced-bottom">Будут безвозвратно удалены все записи, задачи, техосмотры, оборудование и фотографии.</div><div class="field"><label for="clearPhrase">Для подтверждения напишите УДАЛИТЬ</label><input id="clearPhrase" autocomplete="off" autocapitalize="characters" placeholder="УДАЛИТЬ"></div><button class="button danger full" id="clearEverything" disabled>${icon('trash')}Удалить всё</button>`);
+  const node = openModal('Удалить все данные', `<div class="warning-box spaced-bottom">Будут безвозвратно удалены все мероприятия, записи, задачи, техосмотры, оборудование и фотографии.</div><div class="field"><label for="clearPhrase">Для подтверждения напишите УДАЛИТЬ</label><input id="clearPhrase" autocomplete="off" autocapitalize="characters" placeholder="УДАЛИТЬ"></div><button class="button danger full" id="clearEverything" disabled>${icon('trash')}Удалить всё</button>`);
   const input = node.querySelector('#clearPhrase');
   const button = node.querySelector('#clearEverything');
   input.addEventListener('input', () => { button.disabled = input.value.trim().toUpperCase() !== 'УДАЛИТЬ'; });
@@ -772,7 +794,12 @@ function openClearDataModal() {
 }
 
 async function handleAppAction(action, id) {
-  if(action==='new-entry')openEntryForm();
+  if(action==='new-event')openEventForm();
+  else if(action==='event-detail')openEventDetail(id);
+  else if(action==='edit-event'){const item=state.data.events.find(x=>x.id===id);if(item)openEventForm(item);}
+  else if(action==='duplicate-event'){const item=state.data.events.find(x=>x.id===id);if(item)duplicateEvent(item);}
+  else if(action==='delete-event')confirmModal('Удалить мероприятие?','Конфигурация и чек-лист мероприятия будут удалены. Связанные записи и задачи останутся.','Удалить',async()=>{await dbDelete('events',id);toast('Мероприятие удалено');await render();},true);
+  else if(action==='new-entry')openEntryForm();
   else if(action==='new-task')openTaskForm();
   else if(action==='new-inspection')openInspectionForm();
   else if(action==='new-equipment')openEquipmentForm();
@@ -832,7 +859,7 @@ function bindEdgeBackGesture() {
   let startX=0,startY=0,pointerId=null;
   addEventListener('pointerdown',e=>{
     if(e.clientX>22||document.querySelector('[data-modal-backdrop]'))return;
-    if(!['tasks','equipment','report','settings','install'].includes(state.route))return;
+    if(!['tasks','events','equipment','report','settings','install'].includes(state.route))return;
     startX=e.clientX;startY=e.clientY;pointerId=e.pointerId;
   });
   addEventListener('pointerup',e=>{

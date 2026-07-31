@@ -1,5 +1,5 @@
-const CACHE = 'bps-pult-v1.3.0';
-const APP_SHELL = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
+const CACHE = 'bps-pult-v2.0.0-alpha.1';
+const APP_SHELL = ['./', './index.html', './styles.css', './event-logic.js', './app.js', './event-ui.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
