@@ -43,6 +43,7 @@
           ${snapshot.paired?'<button class="button full" data-push-action="test">Отправить тестовое</button><button class="button full" data-push-action="test-delayed">Тест через 2 минуты</button><button class="button full" data-push-action="sync">Синхронизировать расписание</button><button class="button danger full" data-push-action="disable">Отключить уведомления</button>':''}
         </div>
         <p class="settings-note">Ошибки сервера уведомлений не блокируют работу приложения и не изменяют локальные данные.</p>
+        <p class="settings-note">При включении наружу уходят только данные, необходимые для уведомлений; рабочие записи и фотографии не отправляются. <a href="./PUSH-PRIVACY.md" target="_blank" rel="noopener">Подробнее о приватности</a></p>
       </div>
     </section>`;
   }

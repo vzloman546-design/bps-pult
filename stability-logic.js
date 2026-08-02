@@ -5,11 +5,23 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.BpsStability = api;
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const CURRENT_SCHEMA = 5;
+  const CURRENT_SCHEMA = 6;
   const DATA_STORES = ['entries', 'tasks', 'inspections', 'equipment', 'events', 'knowledgeArticles', 'knowledgeCategories', 'settings'];
   const BACKUP_FORMAT = 2;
   const APP_NAME = 'БПС Пульт';
   const SAFE_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif']);
+  const MAX_PHOTOS_PER_RECORD = 3;
+  const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
+  const SAFE_DOCUMENT_MIMES = new Set([
+    'application/pdf', 'text/plain', 'text/csv', 'text/markdown', 'application/rtf',
+    'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/json', 'application/xml', 'text/xml', 'application/zip',
+  ]);
+  const MAX_DOCUMENTS_PER_ARTICLE = 5;
+  const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+  const MAX_DOCUMENT_TOTAL_BYTES = 30 * 1024 * 1024;
 
   const clone = value => typeof structuredClone === 'function'
     ? structuredClone(value)
@@ -29,13 +41,15 @@
   const record = value => value && typeof value === 'object' && !Array.isArray(value);
   const uniqueStrings = value => [...new Set(array(value).map(text).filter(Boolean))];
   const stableId = (prefix, fallback) => text(fallback) || `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
-  const parseImageDataUrl = value => {
+  const parseBase64DataUrl = (value, allowedMimes, message) => {
     const match = /^data:([^;,]+);base64,([a-z0-9+/]+={0,2})$/i.exec(String(value || ''));
-    if (!match || !SAFE_IMAGE_MIMES.has(match[1].toLowerCase()) || match[2].length % 4 === 1) {
-      throw new Error('Некорректное или небезопасное изображение в резервной копии.');
+    if (!match || !allowedMimes.has(match[1].toLowerCase()) || match[2].length % 4 === 1) {
+      throw new Error(message);
     }
     return { mime: match[1].toLowerCase(), base64: match[2] };
   };
+  const parseImageDataUrl = value => parseBase64DataUrl(value, SAFE_IMAGE_MIMES, 'Некорректное или небезопасное изображение в резервной копии.');
+  const parseDocumentDataUrl = value => parseBase64DataUrl(value, SAFE_DOCUMENT_MIMES, 'Некорректный или неподдерживаемый документ в резервной копии.');
   const isSafeImageDataUrl = value => {
     try { parseImageDataUrl(value); return true; } catch (_) { return false; }
   };
@@ -131,6 +145,7 @@
         categoryId: text(item.categoryId) || null,
         linkedEquipmentIds: uniqueStrings(item.linkedEquipmentIds),
         linkedEventIds: uniqueStrings(item.linkedEventIds),
+        attachments: array(item.attachments).filter(attachment => record(attachment)).map(attachment => ({ ...attachment })),
         versions: array(item.versions).slice(-20),
         createdAt, updatedAt,
       };
@@ -194,11 +209,51 @@
           else if (seenRaw.has(key)) rawErrors.push(`${store}: повторяется идентификатор ${key}.`);
           else seenRaw.add(key);
           if (['entries', 'inspections'].includes(store)) {
-            array(item?.photos).forEach((photo, photoIndex) => {
+            const photos = array(item?.photos);
+            if (photos.length > MAX_PHOTOS_PER_RECORD) {
+              rawErrors.push(`${store}[${index}].photos: допускается не более ${MAX_PHOTOS_PER_RECORD} фотографий.`);
+            }
+            photos.forEach((photo, photoIndex) => {
               if (typeof photo !== 'string' || !isSafeImageDataUrl(photo)) {
                 rawErrors.push(`${store}[${index}].photos[${photoIndex}]: небезопасный или неподдерживаемый формат изображения.`);
+                return;
+              }
+              try {
+                if (dataUrlToBytes(photo).bytes.length > MAX_PHOTO_BYTES) {
+                  rawErrors.push(`${store}[${index}].photos[${photoIndex}]: фотография больше 4 МБ.`);
+                }
+              } catch (_) {
+                rawErrors.push(`${store}[${index}].photos[${photoIndex}]: не удалось проверить размер фотографии.`);
               }
             });
+          }
+          if (store === 'knowledgeArticles') {
+            const attachments = array(item?.attachments);
+            if (attachments.length > MAX_DOCUMENTS_PER_ARTICLE) {
+              rawErrors.push(`${store}[${index}].attachments: допускается не более ${MAX_DOCUMENTS_PER_ARTICLE} документов.`);
+            }
+            let totalBytes = 0;
+            attachments.forEach((attachment, attachmentIndex) => {
+              const mime = text(attachment?.mime).toLowerCase();
+              const data = attachment?.data;
+              const size = Number(attachment?.size);
+              if (!record(attachment) || !text(attachment.name)) rawErrors.push(`${store}[${index}].attachments[${attachmentIndex}]: отсутствует имя документа.`);
+              if (!SAFE_DOCUMENT_MIMES.has(mime)) rawErrors.push(`${store}[${index}].attachments[${attachmentIndex}]: тип документа не поддерживается.`);
+              if (typeof data !== 'string' || !data.startsWith(`data:${mime};base64,`)) {
+                rawErrors.push(`${store}[${index}].attachments[${attachmentIndex}]: документ повреждён или прочитан некорректно.`);
+                return;
+              }
+              try {
+                const decoded = documentDataUrlToBytes(data);
+                if (decoded.bytes.length > MAX_DOCUMENT_BYTES || size !== decoded.bytes.length) {
+                  rawErrors.push(`${store}[${index}].attachments[${attachmentIndex}]: размер документа не должен превышать 10 МБ и должен совпадать с данными.`);
+                }
+                totalBytes += decoded.bytes.length;
+              } catch (_) {
+                rawErrors.push(`${store}[${index}].attachments[${attachmentIndex}]: не удалось проверить документ.`);
+              }
+            });
+            if (totalBytes > MAX_DOCUMENT_TOTAL_BYTES) rawErrors.push(`${store}[${index}].attachments: общий размер документов не должен превышать 30 МБ.`);
           }
         });
       }
@@ -511,9 +566,25 @@
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     return { mime: parsed.mime, bytes };
   }
+  function documentDataUrlToBytes(value) {
+    const parsed = parseDocumentDataUrl(value);
+    const binary = typeof atob === 'function' ? atob(parsed.base64) : Buffer.from(parsed.base64, 'base64').toString('binary');
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return { mime: parsed.mime, bytes };
+  }
   function bytesToDataUrl(mime, bytes) {
     const safeMime = text(mime).toLowerCase();
     if (!SAFE_IMAGE_MIMES.has(safeMime)) throw new Error('Архив содержит неподдерживаемый тип изображения.');
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    const base64 = typeof btoa === 'function' ? btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
+    return `data:${safeMime};base64,${base64}`;
+  }
+  function bytesToDocumentDataUrl(mime, bytes) {
+    const safeMime = text(mime).toLowerCase();
+    if (!SAFE_DOCUMENT_MIMES.has(safeMime)) throw new Error('Архив содержит неподдерживаемый тип документа.');
     let binary = '';
     const chunk = 0x8000;
     for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
@@ -536,6 +607,17 @@
           return { attachment: path, mime: decoded.mime, size: decoded.bytes.length };
         }).filter(Boolean);
       }
+    }
+    for (const item of clean.knowledgeArticles) {
+      item.attachments = array(item.attachments).map((attachment, index) => {
+        if (record(attachment) && attachment.attachment) return attachment;
+        if (!record(attachment) || typeof attachment.data !== 'string') return null;
+        const decoded = documentDataUrlToBytes(attachment.data);
+        const path = `attachments/knowledge-${files.length}-${index}.bin`;
+        files.push({ name: path, data: decoded.bytes });
+        const { data, ...metadata } = attachment;
+        return { ...metadata, attachment: path, mime: decoded.mime, size: decoded.bytes.length };
+      }).filter(Boolean);
     }
     const manifest = {
       app: APP_NAME,
@@ -577,13 +659,26 @@
         });
       }
     }
+    for (const item of array(payload.data?.knowledgeArticles)) {
+      item.attachments = array(item.attachments).map(attachment => {
+        if (typeof attachment?.data === 'string') return attachment;
+        if (!record(attachment) || !attachment.attachment || !files.has(attachment.attachment)) {
+          throw new Error(`В архиве отсутствует вложение документа ${attachment?.attachment || ''}.`);
+        }
+        if (!/^attachments\/[a-z0-9._-]+$/i.test(String(attachment.attachment))) throw new Error('Архив содержит некорректный путь документа.');
+        const file = files.get(attachment.attachment);
+        if (Number(attachment.size) !== file.length) throw new Error(`Архив повреждён: размер документа ${attachment.attachment} не совпадает.`);
+        return { ...attachment, data: bytesToDocumentDataUrl(attachment.mime, file) };
+      });
+    }
     return { manifest, payload };
   }
 
   return {
-    APP_NAME, CURRENT_SCHEMA, DATA_STORES, BACKUP_FORMAT, SAFE_IMAGE_MIMES,
+    APP_NAME, CURRENT_SCHEMA, DATA_STORES, BACKUP_FORMAT, SAFE_IMAGE_MIMES, MAX_PHOTOS_PER_RECORD, MAX_PHOTO_BYTES,
+    SAFE_DOCUMENT_MIMES, MAX_DOCUMENTS_PER_ARTICLE, MAX_DOCUMENT_BYTES, MAX_DOCUMENT_TOTAL_BYTES,
     normalizeRecord, migratePayload, validatePayload, countStores, previewImport, mergeData,
     checkIntegrity, sanitizeDiagnostic, relatedChangesForDelete, reverseRelatedChange, crc32, createZip, parseZip,
-    buildBackupArchive, readBackupArchive, dataUrlToBytes, bytesToDataUrl, isSafeImageDataUrl,
+    buildBackupArchive, readBackupArchive, dataUrlToBytes, bytesToDataUrl, documentDataUrlToBytes, bytesToDocumentDataUrl, isSafeImageDataUrl,
   };
 });

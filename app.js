@@ -1,9 +1,9 @@
 'use strict';
 
-const APP_VERSION = '2.6.1';
-const SCHEMA_VERSION = 5;
+const APP_VERSION = '2.7.0';
+const SCHEMA_VERSION = 6;
 const DB_NAME = 'bps-pult-local';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 const STORE_NAMES = [...BpsStability.DATA_STORES];
 const INTERNAL_STORE_NAMES = ['trash', 'drafts'];
 
@@ -726,8 +726,8 @@ function setTheme(theme) {
   const iconSuffix = resolved === 'dark' ? 'dark' : 'light';
   const favicon = document.getElementById('appFavicon');
   const appleTouchIcon = document.getElementById('appleTouchIcon');
-  if (favicon) favicon.setAttribute('href', `./favicon-${iconSuffix}-32.png?v=2.6.1`);
-  if (appleTouchIcon) appleTouchIcon.setAttribute('href', `./apple-touch-icon-${iconSuffix}.png?v=2.6.1`);
+  if (favicon) favicon.setAttribute('href', `./favicon-${iconSuffix}-32.png?v=2.7.0`);
+  if (appleTouchIcon) appleTouchIcon.setAttribute('href', `./apple-touch-icon-${iconSuffix}.png?v=2.7.0`);
   document.getElementById('themeQuickBtn').innerHTML = icon(resolved === 'dark' ? 'sun' : 'moon');
 }
 async function cycleTheme() {
@@ -1260,6 +1260,30 @@ function confirmModal(title, message, confirmText, onConfirm, dangerous = false)
   node.querySelector('#confirmButton').addEventListener('click', async()=>{ await onConfirm(); closeModal(); });
 }
 
+async function withBusyButton(button, busyText, action) {
+  if (!button || button.dataset.busy === 'true') return false;
+  const originalText = button.textContent;
+  button.dataset.busy = 'true';
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  if (busyText) button.textContent = busyText;
+  try {
+    await action();
+    return true;
+  } catch (error) {
+    rememberRuntimeError(error, 'save');
+    toast(error.message || 'Не удалось сохранить данные');
+    return false;
+  } finally {
+    if (button.isConnected) {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.textContent = originalText;
+      delete button.dataset.busy;
+    }
+  }
+}
+
 function photoPickerHtml(photos) {
   return `<div class="photo-grid" id="photoGrid">${photos.map((p,i)=>`<div class="photo-thumb"><img src="${esc(p)}" alt="Фото ${i+1}"><button type="button" class="photo-remove" data-remove-photo="${i}" aria-label="Удалить фото ${i+1}">${icon('close')}</button></div>`).join('')}${photos.length<3?`<label class="photo-add">${icon('camera')}<input type="file" id="photoInput" accept="image/*" multiple aria-label="Добавить фотографии"></label>`:''}</div><div class="field-help">До 3 фотографий. Они сжимаются и сохраняются только на устройстве.</div>`;
 }
@@ -1355,22 +1379,25 @@ function openEntryForm(existing = null, restoredDraft = null) {
       renderPhotos();
     },
   });
-  node.querySelector('#saveEntry').addEventListener('click',async()=>{
+  node.querySelector('#saveEntry').addEventListener('click',async event=>{
+    const button = event.currentTarget;
     const form=node.querySelector('#entryForm'); if(!form.reportValidity()) return;
-    const record={
-      id:existing?.id||uid('entry'), type:node.querySelector('#entryType').value, object:node.querySelector('#entryObject').value,
-      equipment:node.querySelector('#entryEquipment').value.trim(), description:node.querySelector('#entryDescription').value.trim(),
-      status:node.querySelector('#entryStatus').value, date:new Date(node.querySelector('#entryDate').value).toISOString(), eventId:node.querySelector('#linkedEvent')?.value||null, photos,
-      createdAt:existing?.createdAt||nowISO(), updatedAt:nowISO(), sample:existing?.sample||false
-    };
-    let linkedTask = null;
-    if(!existing?.id && sw?.classList.contains('on')) {
-      linkedTask={id:uid('task'),title:`${record.object}${record.equipment?` · ${record.equipment}`:''}: ${record.status}`,object:record.object,description:record.description,dueAt:node.querySelector('#linkedDue').value?new Date(node.querySelector('#linkedDue').value).toISOString():null,priority:node.querySelector('#linkedPriority').value,completed:false,eventId:record.eventId||null,linkedEntryId:record.id,createdAt:nowISO(),updatedAt:nowISO()};
-    }
-    if (linkedTask) await putRecordsAtomically({ entries:record, tasks:linkedTask });
-    else await dbPut('entries',record);
-    await draftController.clear();
-    closeModal();toast(existing?.id?'Запись обновлена':'Запись сохранена');await render();
+    await withBusyButton(button, 'Сохранение…', async()=>{
+      const record={
+        id:existing?.id||uid('entry'), type:node.querySelector('#entryType').value, object:node.querySelector('#entryObject').value,
+        equipment:node.querySelector('#entryEquipment').value.trim(), description:node.querySelector('#entryDescription').value.trim(),
+        status:node.querySelector('#entryStatus').value, date:new Date(node.querySelector('#entryDate').value).toISOString(), eventId:node.querySelector('#linkedEvent')?.value||null, photos,
+        createdAt:existing?.createdAt||nowISO(), updatedAt:nowISO(), sample:existing?.sample||false
+      };
+      let linkedTask = null;
+      if(!existing?.id && sw?.classList.contains('on')) {
+        linkedTask={id:uid('task'),title:`${record.object}${record.equipment?` · ${record.equipment}`:''}: ${record.status}`,object:record.object,description:record.description,dueAt:node.querySelector('#linkedDue').value?new Date(node.querySelector('#linkedDue').value).toISOString():null,priority:node.querySelector('#linkedPriority').value,completed:false,eventId:record.eventId||null,linkedEntryId:record.id,createdAt:nowISO(),updatedAt:nowISO()};
+      }
+      if (linkedTask) await putRecordsAtomically({ entries:record, tasks:linkedTask });
+      else await dbPut('entries',record);
+      await draftController.clear();
+      closeModal();toast(existing?.id?'Запись обновлена':'Запись сохранена');await render();
+    });
   });
   node.querySelector('[data-delete-entry]')?.addEventListener('click',async()=>{await draftController.clear();closeModal({immediate:true});await deleteEntryWithUndo(existing.id);});
 }
@@ -1390,11 +1417,14 @@ function openTaskForm(existing = null, restoredDraft = null) {
   const body=`<form id="taskForm">${eventSelectField(preset.eventId)}<div class="field"><label class="required" for="taskTitle">Название</label><input id="taskTitle" required value="${esc(preset.title||'')}" placeholder="Что нужно сделать"></div><div class="form-grid two"><div class="field"><label for="taskObject">Объект</label><select id="taskObject"><option value="">Без объекта</option>${optionsHtml(OBJECTS,preset.object||'')}</select></div><div class="field"><label for="taskPriority">Приоритет</label><select id="taskPriority">${optionsHtml(PRIORITIES,preset.priority||'Обычный')}</select></div></div><div class="field"><label for="taskDue">Срок</label><input id="taskDue" type="datetime-local" value="${preset.dueAt?localDateTimeValue(new Date(preset.dueAt)):''}"></div><div class="field"><label for="taskDescription">Подробности</label><textarea id="taskDescription" placeholder="Дополнительная информация">${esc(preset.description||'')}</textarea></div>${preset.id?`<button type="button" class="button danger full" data-delete-task="${esc(preset.id)}">${icon('trash')}Удалить задачу</button>`:''}</form>`;
   const node=openModal(preset.id?'Редактировать задачу':'Новая задача',body,{actionHtml:'<button class="text-button" id="saveTask">Сохранить</button>'});
   const draftController=attachDraftAutosave(node,{type:'task',entityId:preset.id||'',restored:restoredDraft,formSelector:'#taskForm'});
-  node.querySelector('#saveTask').addEventListener('click',async()=>{
+  node.querySelector('#saveTask').addEventListener('click',async event=>{
+    const button = event.currentTarget;
     const form=node.querySelector('#taskForm');if(!form.reportValidity())return;
-    await dbPut('tasks',{id:preset.id||uid('task'),title:node.querySelector('#taskTitle').value.trim(),object:node.querySelector('#taskObject').value,priority:node.querySelector('#taskPriority').value,dueAt:node.querySelector('#taskDue').value?new Date(node.querySelector('#taskDue').value).toISOString():null,description:node.querySelector('#taskDescription').value.trim(),completed:preset.completed||false,completedAt:preset.completedAt||null,eventId:node.querySelector('#linkedEvent')?.value||null,linkedEntryId:preset.linkedEntryId||null,linkedInspectionId:preset.linkedInspectionId||null,createdAt:preset.createdAt||nowISO(),updatedAt:nowISO(),sample:preset.sample||false});
-    await draftController.clear();
-    closeModal();toast(preset.id?'Задача обновлена':'Задача создана');await render();
+    await withBusyButton(button, 'Сохранение…', async()=>{
+      await dbPut('tasks',{id:preset.id||uid('task'),title:node.querySelector('#taskTitle').value.trim(),object:node.querySelector('#taskObject').value,priority:node.querySelector('#taskPriority').value,dueAt:node.querySelector('#taskDue').value?new Date(node.querySelector('#taskDue').value).toISOString():null,description:node.querySelector('#taskDescription').value.trim(),completed:preset.completed||false,completedAt:preset.completedAt||null,eventId:node.querySelector('#linkedEvent')?.value||null,linkedEntryId:preset.linkedEntryId||null,linkedInspectionId:preset.linkedInspectionId||null,createdAt:preset.createdAt||nowISO(),updatedAt:nowISO(),sample:preset.sample||false});
+      await draftController.clear();
+      closeModal();toast(preset.id?'Задача обновлена':'Задача создана');await render();
+    });
   });
   node.querySelector('[data-delete-task]')?.addEventListener('click',async()=>{await draftController.clear();closeModal({immediate:true});await softDelete('tasks',preset.id,'Задача');});
 }
@@ -1422,8 +1452,10 @@ function openInspectionForm(existing = null, restoredDraft = null) {
     snapshot:()=>({values:formValues(node.querySelector('#inspectionForm')),items:values.map(item=>({...item})),photos:[...photos]}),
     restore:data=>{applyFormValues(node.querySelector('#inspectionForm'),data.values);node.querySelector('#inspectionChecklist').innerHTML=checklist();bindChecks();renderPhotos();},
   });
-  node.querySelector('#saveInspection').addEventListener('click',async()=>{
+  node.querySelector('#saveInspection').addEventListener('click',async event=>{
+    const button = event.currentTarget;
     const form=node.querySelector('#inspectionForm');if(!form.reportValidity())return;
+    await withBusyButton(button, 'Сохранение…', async()=>{
     const record={id:existing?.id||uid('inspection'),object:node.querySelector('#inspectionObject').value,equipment:node.querySelector('#inspectionEquipment').value.trim(),date:new Date(node.querySelector('#inspectionDate').value).toISOString(),eventId:node.querySelector('#linkedEvent')?.value||null,items:values,conclusion:node.querySelector('#inspectionConclusion').value.trim(),photos,createdAt:existing?.createdAt||nowISO(),updatedAt:nowISO(),sample:existing?.sample||false};
     const issues=values.filter(x=>x.status==='issue');
     const linkedTask=sw.classList.contains('on')&&issues.length
@@ -1433,6 +1465,7 @@ function openInspectionForm(existing = null, restoredDraft = null) {
     else await dbPut('inspections',record);
     await draftController.clear();
     closeModal();toast(isExisting?'Осмотр обновлён':'Техосмотр сохранён');await render();
+    });
   });
   node.querySelector('[data-delete-inspection]')?.addEventListener('click',async()=>{await draftController.clear();closeModal({immediate:true});await deleteInspectionWithUndo(existing.id);});
 }
@@ -1453,11 +1486,14 @@ function openEquipmentForm(existing = null, restoredDraft = null) {
   const favorite=node.querySelector('#equipmentFavorite');favorite.addEventListener('click',()=>{favorite.classList.toggle('on');favorite.setAttribute('aria-checked',String(favorite.classList.contains('on')));});
   const draftController=attachDraftAutosave(node,{type:'equipment',entityId:e.id||'',restored:restoredDraft,formSelector:'#equipmentForm'});
   node.querySelector('#saveEquipment').addEventListener('click',async event=>{
+    const button = event.currentTarget;
     const form=node.querySelector('#equipmentForm');if(!form.reportValidity())return;
-    const record={id:e.id||uid('equipment'),name:node.querySelector('#equipmentName').value.trim(),type:node.querySelector('#equipmentType').value.trim(),object:node.querySelector('#equipmentObject').value,location:node.querySelector('#equipmentLocation').value.trim(),designation:node.querySelector('#equipmentDesignation').value.trim(),status:node.querySelector('#equipmentStatus').value,ip:node.querySelector('#equipmentIp').value.trim(),serial:node.querySelector('#equipmentSerial').value.trim(),note:node.querySelector('#equipmentNote').value.trim(),favorite:favorite.classList.contains('on'),createdAt:e.createdAt||nowISO(),updatedAt:nowISO(),sample:e.sample||false};
-    const duplicates=BpsProductivity.findEquipmentDuplicates(state.data.equipment,record,e.id||null);
-    if(duplicates.length&&!event.currentTarget.dataset.duplicateConfirmed){event.currentTarget.dataset.duplicateConfirmed='true';toast(`Возможный дубликат: ${duplicates.slice(0,2).map(item=>item.name).join(', ')}. Нажмите «Сохранить» ещё раз.` ,{duration:7000});return;}
-    await dbPut('equipment',record);await draftController.clear();closeModal();toast(e.id?'Оборудование обновлено':'Оборудование добавлено');await render();
+    await withBusyButton(button, 'Сохранение…', async()=>{
+      const record={id:e.id||uid('equipment'),name:node.querySelector('#equipmentName').value.trim(),type:node.querySelector('#equipmentType').value.trim(),object:node.querySelector('#equipmentObject').value,location:node.querySelector('#equipmentLocation').value.trim(),designation:node.querySelector('#equipmentDesignation').value.trim(),status:node.querySelector('#equipmentStatus').value,ip:node.querySelector('#equipmentIp').value.trim(),serial:node.querySelector('#equipmentSerial').value.trim(),note:node.querySelector('#equipmentNote').value.trim(),favorite:favorite.classList.contains('on'),createdAt:e.createdAt||nowISO(),updatedAt:nowISO(),sample:e.sample||false};
+      const duplicates=BpsProductivity.findEquipmentDuplicates(state.data.equipment,record,e.id||null);
+      if(duplicates.length&&!button.dataset.duplicateConfirmed){button.dataset.duplicateConfirmed='true';toast(`Возможный дубликат: ${duplicates.slice(0,2).map(item=>item.name).join(', ')}. Нажмите «Сохранить» ещё раз.` ,{duration:7000});return;}
+      await dbPut('equipment',record);await draftController.clear();closeModal();toast(e.id?'Оборудование обновлено':'Оборудование добавлено');await render();
+    });
   });
   node.querySelector('[data-delete-equipment]')?.addEventListener('click',async()=>{await draftController.clear();closeModal({immediate:true});await deleteEquipmentWithUndo(e.id);});
 }

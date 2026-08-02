@@ -5,12 +5,13 @@ const vm=require('node:vm');
 const path=require('node:path');
 const sw=fs.readFileSync(path.join(__dirname,'..','sw.js'),'utf8');
 const html=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
-assert.match(sw,/const VERSION = '2\.6\.1'/);
+assert.match(sw,/const VERSION = '2\.7\.0'/);
 for (const asset of ['styles.css','stability-logic.js','event-logic.js','knowledge-logic.js','productivity-logic.js','push-notifications.js','app.js','push-ui.js','event-ui.js','knowledge-ui.js']) {
-  assert.equal(html.includes(`${asset}?v=2.6.1`),true,`${asset} должен иметь версионный URL`);
+  assert.equal(html.includes(`${asset}?v=2.7.0`),true,`${asset} должен иметь версионный URL`);
 }
+assert.match(sw, /PUSH-PRIVACY\.md/);
 const installBlock=sw.slice(sw.indexOf("addEventListener('install'"),sw.indexOf("addEventListener('activate'"));
-assert.match(installBlock,/skipWaiting/,'Аварийный релиз должен активироваться без зависания сломанной версии');
+assert.doesNotMatch(installBlock,/skipWaiting/,'Новая версия не должна активироваться во время работы пользователя');
 assert.match(sw,/event\.data\?\.type === 'SKIP_WAITING'/);
 assert.match(sw,/caches\.keys\(\)/);
 assert.match(sw,/event\.request\.mode === 'navigate'/);
@@ -30,15 +31,16 @@ assert.doesNotMatch(sw,/caches\.match\(/,'Worker не должен читать 
   const context={
     URL,
     Response:{error:()=>({source:'error'})},
-    caches:{open:async name=>{assert.equal(name,'bps-pult-2.6.1');return cache;},keys:async()=>[],delete:async()=>true},
-    fetch:async()=>{networkCalls++;return networkResponse;},
-    self:{
-      location:{origin:'https://example.test'},
-      clients:{claim:async()=>{}},
-      skipWaiting:async()=>{},
-      addEventListener:(name,handler)=>{handlers[name]=handler;},
-    },
-  };
+      caches:{open:async name=>{assert.equal(name,'bps-pult-2.7.0');return cache;},keys:async()=>[],delete:async()=>true},
+      fetch:async()=>{networkCalls++;return networkResponse;},
+      self:{
+        location:{origin:'https://example.test'},
+        clients:{claim:async()=>{}},
+        skipWaiting:async()=>{skipWaitingCalls+=1;},
+        addEventListener:(name,handler)=>{handlers[name]=handler;},
+      },
+    };
+  let skipWaitingCalls=0;
   vm.runInNewContext(sw,context);
   let responsePromise;
   handlers.fetch({request:{method:'GET',mode:'navigate',url:'https://example.test/route'},respondWith:value=>{responsePromise=value;}});
@@ -46,5 +48,7 @@ assert.doesNotMatch(sw,/caches\.match\(/,'Worker не должен читать 
   handlers.fetch({request:{method:'GET',mode:'cors',url:'https://example.test/app.js'},respondWith:value=>{responsePromise=value;}});
   assert.equal(await responsePromise,assetResponse,'Статический ресурс должен браться из активного кэша');
   assert.equal(networkCalls,1);
-  console.log('service-worker: repair update, navigation and cache checks passed');
+  handlers.message({data:{type:'SKIP_WAITING'}});
+  assert.equal(skipWaitingCalls,1,'Активация должна выполняться только по явному сообщению приложения');
+  console.log('service-worker: controlled update, navigation and cache checks passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -18,6 +18,18 @@ window.BpsKnowledgeLogic = (() => {
     { value: 'archived', label: 'Архив' },
   ];
 
+  const MAX_ATTACHMENTS = 5;
+  const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+  const MAX_ATTACHMENT_TOTAL_BYTES = 30 * 1024 * 1024;
+  const ATTACHMENT_MIMES = [
+    'application/pdf', 'text/plain', 'text/csv', 'text/markdown', 'application/rtf',
+    'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/json', 'application/xml', 'text/xml', 'application/zip',
+  ];
+  const SAFE_ATTACHMENT_MIMES = new Set(ATTACHMENT_MIMES);
+
   const DEFAULT_CATEGORIES = [
     ['kb_bps', 'Билетно-пропускная система', null],
     ['kb_turnstiles', 'Турникеты и гейты', null],
@@ -41,6 +53,59 @@ window.BpsKnowledgeLogic = (() => {
   const tags = value => unique(Array.isArray(value)
     ? value.map(item => text(item).replace(/^#/, '').toLowerCase())
     : String(value ?? '').split(/[,;\n]/).map(item => text(item).replace(/^#/, '').toLowerCase()));
+
+  function normalizeAttachment(input = {}) {
+    const mime = text(input.mime).toLowerCase();
+    const size = Math.max(0, Number(input.size) || 0);
+    return {
+      id: text(input.id) || `attachment_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      name: text(input.name).slice(0, 180),
+      mime,
+      size,
+      data: text(input.data),
+      addedAt: input.addedAt || new Date().toISOString(),
+    };
+  }
+
+  function normalizeAttachments(value) {
+    let total = 0;
+    return (Array.isArray(value) ? value : [])
+      .map(normalizeAttachment)
+      .filter(item => {
+        if (!item.name || !SAFE_ATTACHMENT_MIMES.has(item.mime) || !item.data.startsWith(`data:${item.mime};base64,`)) return false;
+        if (!Number.isFinite(item.size) || item.size <= 0 || item.size > MAX_ATTACHMENT_BYTES) return false;
+        if (attachmentByteLength(item.data) !== item.size) return false;
+        if (total + item.size > MAX_ATTACHMENT_TOTAL_BYTES) return false;
+        total += item.size;
+        return true;
+      })
+      .slice(0, MAX_ATTACHMENTS);
+  }
+
+  function attachmentByteLength(value) {
+    const match = /^data:[^;,]+;base64,([a-z0-9+/]+={0,2})$/i.exec(text(value));
+    if (!match || match[1].length % 4 === 1) return -1;
+    const padding = match[1].endsWith('==') ? 2 : (match[1].endsWith('=') ? 1 : 0);
+    return Math.max(0, (match[1].length * 3) / 4 - padding);
+  }
+
+  function validateAttachments(value) {
+    const items = Array.isArray(value) ? value : [];
+    const errors = [];
+    if (items.length > MAX_ATTACHMENTS) errors.push(`Можно прикрепить не более ${MAX_ATTACHMENTS} документов.`);
+    let total = 0;
+    items.slice(0, MAX_ATTACHMENTS).forEach((input, index) => {
+      const item = normalizeAttachment(input);
+      if (!item.name) errors.push(`Документ ${index + 1}: не указано имя файла.`);
+      if (!SAFE_ATTACHMENT_MIMES.has(item.mime)) errors.push(`Документ ${index + 1}: тип файла не поддерживается.`);
+      if (!item.data.startsWith(`data:${item.mime};base64,`)) errors.push(`Документ ${index + 1}: файл повреждён или прочитан некорректно.`);
+      const actualSize = attachmentByteLength(item.data);
+      if (!Number.isFinite(item.size) || item.size <= 0 || item.size > MAX_ATTACHMENT_BYTES || actualSize !== item.size) errors.push(`Документ ${index + 1}: размер должен совпадать с данными и быть не больше 10 МБ.`);
+      total += actualSize > 0 ? actualSize : 0;
+    });
+    if (total > MAX_ATTACHMENT_TOTAL_BYTES) errors.push('Общий размер документов не должен превышать 30 МБ.');
+    return { valid: errors.length === 0, errors, attachments: normalizeAttachments(items) };
+  }
 
   function normalizeCategory(input = {}) {
     return {
@@ -74,6 +139,7 @@ window.BpsKnowledgeLogic = (() => {
       favorite: Boolean(input.favorite),
       linkedEquipmentIds: unique((Array.isArray(input.linkedEquipmentIds) ? input.linkedEquipmentIds : []).map(text)),
       linkedEventIds: unique((Array.isArray(input.linkedEventIds) ? input.linkedEventIds : []).map(text)),
+      attachments: normalizeAttachments(input.attachments),
       versions: Array.isArray(input.versions) ? input.versions.slice(-20) : [],
       lastReviewedAt: input.lastReviewedAt || null,
       lastOpenedAt: input.lastOpenedAt || null,
@@ -195,7 +261,7 @@ window.BpsKnowledgeLogic = (() => {
       normalized.prerequisites.join(' '), normalized.steps.join(' '),
       normalized.expectedResult, normalized.troubleshooting, normalized.notes,
       normalized.tags.join(' '), categoryPath(normalized.categoryId, categories),
-      linkedContextText(normalized, context),
+      linkedContextText(normalized, context), normalized.attachments.map(item => item.name).join(' '),
     ].join(' ').toLocaleLowerCase('ru-RU');
   }
 
@@ -246,7 +312,8 @@ window.BpsKnowledgeLogic = (() => {
 
   return {
     ARTICLE_TYPES, ARTICLE_STATUSES, DEFAULT_CATEGORIES,
-    normalizeCategory, normalizeArticle, validateArticle, mergeForSave,
+    MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_TOTAL_BYTES, ATTACHMENT_MIMES,
+    normalizeCategory, normalizeArticle, normalizeAttachment, normalizeAttachments, validateAttachments, validateArticle, mergeForSave,
     effectiveStatus, categoryPath, descendantIds, filterArticles,
     categoryCounts, restoreVersion, searchBlob, lines, tags,
   };

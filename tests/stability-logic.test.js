@@ -12,7 +12,7 @@ baseData.settings = [{ key:'theme', value:'dark' }];
   const old = { app:'БПС Пульт', version:'1.0', schemaVersion:1, data:{ entries:baseData.entries } };
   const result = S.validatePayload(old);
   assert.equal(result.valid, true);
-  assert.equal(result.payload.schemaVersion, 5);
+  assert.equal(result.payload.schemaVersion, 6);
   assert.equal(result.payload.data.entries[0].id, 'e1');
   assert.equal(result.payload.data.settings.some(item => item.key === 'dataSchemaVersion'), true);
 }
@@ -27,6 +27,19 @@ baseData.settings = [{ key:'theme', value:'dark' }];
   const corrupted = archive.bytes.slice();
   corrupted[50] ^= 0xff;
   assert.throws(() => S.readBackupArchive(corrupted), /поврежд|контрольн/i);
+}
+
+{
+  const withDocument = structuredClone(baseData);
+  withDocument.knowledgeArticles = [{
+    id:'article-doc', title:'Регламент', categoryId:'kb_bps', type:'reference',
+    attachments:[{ id:'doc1', name:'Регламент.pdf', mime:'application/pdf', size:3, data:'data:application/pdf;base64,AQID' }],
+  }];
+  const archive = S.buildBackupArchive(withDocument, { version:'2.7.0' });
+  assert.equal(archive.manifest.attachmentCount, 2, 'В backup должны попасть фото и документы');
+  const unpacked = S.readBackupArchive(archive.bytes);
+  assert.equal(unpacked.payload.data.knowledgeArticles[0].attachments[0].data, 'data:application/pdf;base64,AQID');
+  assert.equal(S.validatePayload(unpacked.payload).valid, true);
 }
 
 {
@@ -60,7 +73,7 @@ baseData.settings = [{ key:'theme', value:'dark' }];
 
 
 {
-  for (const schemaVersion of [2, 3, 4]) {
+  for (const schemaVersion of [2, 3, 4, 5]) {
     const payload = {
       app:'БПС Пульт', version:`2.0-alpha-schema-${schemaVersion}`, schemaVersion,
       data:{
@@ -71,9 +84,10 @@ baseData.settings = [{ key:'theme', value:'dark' }];
     };
     const result=S.validatePayload(payload);
     assert.equal(result.valid,true);
-    assert.equal(result.payload.schemaVersion,5);
+    assert.equal(result.payload.schemaVersion,6);
     assert.equal(result.payload.data.events[0].id,'ev1');
     assert.equal(result.payload.data.knowledgeArticles[0].id,'kb1');
+    assert.deepEqual(result.payload.data.knowledgeArticles[0].attachments,[]);
   }
 }
 
@@ -92,6 +106,27 @@ baseData.settings = [{ key:'theme', value:'dark' }];
   assert.equal(result.valid, false);
   assert.match(result.errors.join(' '), /небезопасный|неподдерживаемый/i);
   assert.equal(S.isSafeImageDataUrl('data:image/jpeg;base64,'), false, 'Пустое изображение недопустимо');
+}
+
+{
+  const tooMany = { app:'БПС Пульт', schemaVersion:5, data:structuredClone(baseData) };
+  tooMany.data.entries[0].photos = Array.from({ length: S.MAX_PHOTOS_PER_RECORD + 1 }, () => 'data:image/jpeg;base64,AQID');
+  const tooManyResult = S.validatePayload(tooMany);
+  assert.equal(tooManyResult.valid, false);
+  assert.match(tooManyResult.errors.join(' '), /не более 3 фотографий/i);
+
+  const tooLarge = { app:'БПС Пульт', schemaVersion:5, data:structuredClone(baseData) };
+  const largeBase64 = Buffer.alloc(S.MAX_PHOTO_BYTES + 1, 1).toString('base64');
+  tooLarge.data.entries[0].photos = [`data:image/jpeg;base64,${largeBase64}`];
+  const tooLargeResult = S.validatePayload(tooLarge);
+  assert.equal(tooLargeResult.valid, false);
+  assert.match(tooLargeResult.errors.join(' '), /больше 4 МБ/i);
+
+  const unsafeDocument = { app:'БПС Пульт', schemaVersion:5, data:structuredClone(baseData) };
+  unsafeDocument.data.knowledgeArticles = [{ id:'article-doc', title:'Документ', categoryId:'kb_bps', attachments:[{ id:'doc1', name:'payload.exe', mime:'application/x-msdownload', size:3, data:'data:application/x-msdownload;base64,AQID' }] }];
+  const unsafeDocumentResult = S.validatePayload(unsafeDocument);
+  assert.equal(unsafeDocumentResult.valid, false);
+  assert.match(unsafeDocumentResult.errors.join(' '), /тип документа не поддерживается/i);
 }
 
 {
@@ -167,7 +202,7 @@ baseData.settings = [{ key:'theme', value:'dark' }];
   const payload = JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures','legacy-schema-4.json'),'utf8'));
   const result = S.validatePayload(payload);
   assert.equal(result.valid, true);
-  assert.equal(result.payload.schemaVersion, 5);
+  assert.equal(result.payload.schemaVersion, 6);
   assert.equal(result.payload.data.equipment[0].favorite, true);
   assert.equal(result.payload.data.equipment[0].location, 'Правая линия');
   assert.equal(result.payload.data.events[0].verifiedBy, 'Артём');

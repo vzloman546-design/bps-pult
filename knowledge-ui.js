@@ -25,6 +25,59 @@ function knowledgeEffectiveStatus(article) {
   return BpsKnowledgeLogic.effectiveStatus(article);
 }
 
+const KNOWLEDGE_ATTACHMENT_EXTENSIONS = {
+  pdf:'application/pdf', txt:'text/plain', csv:'text/csv', md:'text/markdown', rtf:'application/rtf',
+  doc:'application/msword', docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls:'application/vnd.ms-excel', xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt:'application/vnd.ms-powerpoint', pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  json:'application/json', xml:'application/xml', zip:'application/zip',
+};
+
+function knowledgeAttachmentMime(file) {
+  const declared = String(file.type || '').toLowerCase();
+  if (BpsKnowledgeLogic.ATTACHMENT_MIMES.includes(declared)) return declared;
+  const extension = String(file.name || '').split('.').pop().toLowerCase();
+  return KNOWLEDGE_ATTACHMENT_EXTENSIONS[extension] || '';
+}
+
+function readKnowledgeFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Не удалось прочитать документ.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function knowledgeAttachmentRows(attachments, editable = false) {
+  return attachments.length
+    ? `<div class="knowledge-attachment-list">${attachments.map((item, index) => `<div class="knowledge-attachment-row"><span class="row-icon">${icon('report')}</span><span class="list-row-main"><strong>${esc(item.name)}</strong><small>${esc(item.mime)} · ${formatBytes(item.size)}</small></span>${editable ? `<button type="button" class="icon-button compact danger-ghost" data-knowledge-attachment-remove="${index}" aria-label="Удалить документ ${esc(item.name)}">${icon('trash')}</button>` : `<a class="icon-button compact" href="${esc(item.data)}" download="${esc(item.name)}" target="_blank" rel="noopener" aria-label="Открыть документ ${esc(item.name)}">${icon('download')}</a>`}</div>`).join('')}</div>`
+    : '<div class="quiet-state compact">Нет прикреплённых документов</div>';
+}
+
+async function addKnowledgeFiles(files, attachments, rerender) {
+  let total = attachments.reduce((sum, item) => sum + Number(item.size || 0), 0);
+  for (const file of [...files]) {
+    if (attachments.length >= BpsKnowledgeLogic.MAX_ATTACHMENTS) { toast(`Можно прикрепить не более ${BpsKnowledgeLogic.MAX_ATTACHMENTS} документов.`); break; }
+    const mime = knowledgeAttachmentMime(file);
+    if (!mime) { toast(`Тип документа «${file.name}» не поддерживается.`); continue; }
+    if (file.size <= 0 || file.size > BpsKnowledgeLogic.MAX_ATTACHMENT_BYTES) { toast(`Документ «${file.name}» больше 10 МБ или пустой.`); continue; }
+    if (total + file.size > BpsKnowledgeLogic.MAX_ATTACHMENT_TOTAL_BYTES) { toast('Общий размер документов не должен превышать 30 МБ.'); break; }
+    try {
+      await ensureStorageCapacity(file.size * 2, 'документов');
+      const rawData = await readKnowledgeFile(file);
+      const base64 = rawData.split(',')[1] || '';
+      const data = `data:${mime};base64,${base64}`;
+      const candidate = { id: uid('attachment'), name: file.name, mime, size: file.size, data, addedAt: nowISO() };
+      const validation = BpsKnowledgeLogic.validateAttachments([...attachments, candidate]);
+      if (!validation.valid) { toast(validation.errors[0]); continue; }
+      attachments.push(candidate);
+      total += file.size;
+      rerender();
+    } catch (error) { toast(error.message || 'Не удалось добавить документ.'); }
+  }
+}
+
 async function ensureKnowledgeSeed() {
   const now = nowISO();
   let seeded = false;
@@ -155,6 +208,7 @@ function categoryOptions(selectedId, excludedIds = new Set()) {
 function openKnowledgeArticleForm(existing = null, restoredDraft = null) {
   const article = BpsKnowledgeLogic.normalizeArticle(existing || { type:'instruction', status:'current', favorite:false });
   let steps = [...(restoredDraft?.data?.steps || article.steps)];
+  let attachments = [...(restoredDraft?.data?.attachments || article.attachments)].map(item => ({ ...item }));
   const body = `<form id="knowledgeForm" class="knowledge-form">
     <section class="form-section"><h3>Карточка материала</h3>
       <div class="field"><label class="required" for="knowledgeTitle">Название</label><input id="knowledgeTitle" required value="${esc(article.title)}" placeholder="Например: Диагностика считывателя турникета"></div>
@@ -170,6 +224,9 @@ function openKnowledgeArticleForm(existing = null, restoredDraft = null) {
       <div class="field"><label for="knowledgeExpected">Ожидаемый результат</label><textarea id="knowledgeExpected" class="textarea-compact">${esc(article.expectedResult)}</textarea></div>
       <div class="field"><label for="knowledgeTroubleshooting">Если не получилось</label><textarea id="knowledgeTroubleshooting" placeholder="Диагностика, обходное решение и дальнейшие действия">${esc(article.troubleshooting)}</textarea></div>
       <div class="field"><label for="knowledgeNotes">Дополнительные сведения</label><textarea id="knowledgeNotes" placeholder="Команды, адреса, контакты и личный опыт">${esc(article.notes)}</textarea></div>
+    </section>
+    <section class="form-section"><h3>Документы</h3>
+      <div class="field"><label for="knowledgeAttachmentInput">Прикрепить документы</label><input id="knowledgeAttachmentInput" type="file" multiple accept="${BpsKnowledgeLogic.ATTACHMENT_MIMES.join(',')},.pdf,.txt,.csv,.md,.rtf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.json,.xml,.zip" aria-describedby="knowledgeAttachmentHelp"><div id="knowledgeAttachmentsList">${knowledgeAttachmentRows(attachments, true)}</div><div class="field-help" id="knowledgeAttachmentHelp">До ${BpsKnowledgeLogic.MAX_ATTACHMENTS} документов, не более 10 МБ каждый и 30 МБ суммарно.</div></div>
     </section>
     <section class="form-section"><div class="form-section-head"><div><h3>Связи</h3><p>Материал появится в контексте выбранных объектов</p></div></div>
       <div class="field"><label>Оборудование</label>${knowledgeLinkedOptions(state.data.equipment, article.linkedEquipmentIds, 'equipment')}</div>
@@ -196,6 +253,22 @@ function openKnowledgeArticleForm(existing = null, restoredDraft = null) {
   };
   let draftController = null;
   renderSteps();
+  const renderAttachments = () => {
+    const list = node.querySelector('#knowledgeAttachmentsList');
+    if (!list) return;
+    list.innerHTML = knowledgeAttachmentRows(attachments, true);
+    node.querySelectorAll('[data-knowledge-attachment-remove]').forEach(button => button.addEventListener('click', () => {
+      attachments.splice(Number(button.dataset.knowledgeAttachmentRemove), 1);
+      renderAttachments();
+      draftController?.schedule();
+    }));
+  };
+  node.querySelector('#knowledgeAttachmentInput')?.addEventListener('change', async event => {
+    await addKnowledgeFiles(event.target.files, attachments, renderAttachments);
+    event.target.value = '';
+    draftController?.schedule();
+  });
+  renderAttachments();
   node.querySelector('#addKnowledgeStep').addEventListener('click',()=>{syncSteps();steps.push('');renderSteps();const inputs=stepList.querySelectorAll('[data-knowledge-step]');inputs[inputs.length-1]?.focus();draftController?.schedule();});
   draftController=attachDraftAutosave(node,{
     type:'knowledge',entityId:existing?.id||'',restored:restoredDraft,formSelector:'#knowledgeForm',
@@ -205,6 +278,7 @@ function openKnowledgeArticleForm(existing = null, restoredDraft = null) {
       return {
         values:formValues(node.querySelector('#knowledgeForm')),
         steps:[...steps],
+        attachments: attachments.map(item => ({ ...item })),
         linkedEquipmentIds:checked.filter(input=>state.data.equipment.some(item=>item.id===input.value)).map(input=>input.value),
         linkedEventIds:checked.filter(input=>state.data.events.some(item=>item.id===input.value)).map(input=>input.value),
       };
@@ -212,10 +286,13 @@ function openKnowledgeArticleForm(existing = null, restoredDraft = null) {
     restore:data=>{
       applyFormValues(node.querySelector('#knowledgeForm'),data.values);
       node.querySelectorAll('.knowledge-link-list input[type="checkbox"]').forEach(input=>{input.checked=[...(data.linkedEquipmentIds||[]),...(data.linkedEventIds||[])].includes(input.value);});
-      steps=[...(data.steps||[])];renderSteps();
+      steps=[...(data.steps||[])];
+      attachments=[...(data.attachments||[])].map(item => ({ ...item }));
+      renderSteps();renderAttachments();
     },
   });
-  node.querySelector('#saveKnowledgeArticle').addEventListener('click', async () => {
+  node.querySelector('#saveKnowledgeArticle').addEventListener('click', async event => {
+    const button = event.currentTarget;
     const form = node.querySelector('#knowledgeForm');
     if (!form.reportValidity()) return;
     const linkedEquipmentIds = [...node.querySelectorAll('.knowledge-link-list input[type="checkbox"]')]
@@ -237,17 +314,23 @@ function openKnowledgeArticleForm(existing = null, restoredDraft = null) {
       expectedResult: node.querySelector('#knowledgeExpected').value,
       troubleshooting: node.querySelector('#knowledgeTroubleshooting').value,
       notes: node.querySelector('#knowledgeNotes').value,
+      attachments,
       linkedEquipmentIds, linkedEventIds,
       createdAt: existing?.createdAt || nowISO(),
       lastReviewedAt: existing?.lastReviewedAt || null,
       lastOpenedAt: existing?.lastOpenedAt || null,
     };
+    const attachmentValidation = BpsKnowledgeLogic.validateAttachments(attachments);
+    if (!attachmentValidation.valid) { toast(attachmentValidation.errors[0]); return; }
+    draft.attachments = attachmentValidation.attachments;
     const validation = BpsKnowledgeLogic.validateArticle(draft);
     if (!validation.valid) { toast(validation.errors[0]); return; }
-    const saved = BpsKnowledgeLogic.mergeForSave(existing, validation.article, nowISO());
-    await dbPut('knowledgeArticles', saved);
-    await draftController.clear();
-    closeModal(); toast(existing ? 'Материал обновлён' : 'Материал сохранён'); await render();
+    await withBusyButton(button, 'Сохранение…', async () => {
+      const saved = BpsKnowledgeLogic.mergeForSave(existing, validation.article, nowISO());
+      await dbPut('knowledgeArticles', saved);
+      await draftController.clear();
+      closeModal(); toast(existing ? 'Материал обновлён' : 'Материал сохранён'); await render();
+    });
   });
   node.querySelector('[data-kb-form-delete]')?.addEventListener('click', async () => {
     await draftController.clear();
@@ -269,6 +352,7 @@ async function openKnowledgeArticleDetail(id) {
   await dbPut('knowledgeArticles', article);
   rememberRecent('knowledgeArticles',article.id,article.title);
   const status = knowledgeEffectiveStatus(article);
+  const documents = BpsKnowledgeLogic.normalizeAttachments(article.attachments);
   const equipment = state.data.equipment.filter(item => article.linkedEquipmentIds.includes(item.id));
   const events = state.data.events.filter(item => article.linkedEventIds.includes(item.id));
   const prerequisites = article.prerequisites.length ? `<ul class="knowledge-bullet-list">${article.prerequisites.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : '';
@@ -288,6 +372,7 @@ async function openKnowledgeArticleDetail(id) {
     ${knowledgeDetailSection('Ожидаемый результат', article.expectedResult ? `<div class="knowledge-callout success">${icon('check')}<p>${nl2br(article.expectedResult)}</p></div>` : '')}
     ${knowledgeDetailSection('Если не получилось', article.troubleshooting ? `<div class="knowledge-callout warning">${icon('wrench')}<p>${nl2br(article.troubleshooting)}</p></div>` : '')}
     ${knowledgeDetailSection('Дополнительные сведения', article.notes ? `<p class="knowledge-prose">${nl2br(article.notes)}</p>` : '')}
+    ${documents.length ? knowledgeDetailSection('Документы', knowledgeAttachmentRows(documents, false)) : ''}
     ${article.tags.length ? knowledgeDetailSection('Теги', `<div class="knowledge-tags">${article.tags.map(tag => `<span class="tag">#${esc(tag)}</span>`).join('')}</div>`) : ''}
     ${links ? knowledgeDetailSection('Связано с', `<div class="knowledge-related-list">${links}</div>`) : ''}
     <div class="knowledge-detail-actions">
@@ -331,15 +416,18 @@ function openKnowledgeCategoryForm(existing = null) {
   const descendants = existing ? BpsKnowledgeLogic.descendantIds(existing.id, state.data.knowledgeCategories) : new Set();
   const body = `<form id="knowledgeCategoryForm"><div class="field"><label class="required" for="knowledgeCategoryName">Название</label><input id="knowledgeCategoryName" required value="${esc(existing?.name || '')}" placeholder="Например: Контроллеры"></div><div class="field"><label for="knowledgeCategoryParent">Родительский раздел</label><select id="knowledgeCategoryParent"><option value="">Корневой раздел</option>${categoryOptions(existing?.parentId || '', descendants)}</select></div>${existing && !existing.system ? `<button type="button" class="button danger full" id="deleteKnowledgeCategory">${icon('trash')}Удалить раздел</button>` : ''}</form>`;
   const node = openModal(existing ? 'Изменить раздел' : 'Новый раздел', body, { actionHtml:'<button class="text-button" id="saveKnowledgeCategory">Сохранить</button>' });
-  node.querySelector('#saveKnowledgeCategory').addEventListener('click', async () => {
+  node.querySelector('#saveKnowledgeCategory').addEventListener('click', async event => {
+    const button = event.currentTarget;
     const form = node.querySelector('#knowledgeCategoryForm'); if (!form.reportValidity()) return;
-    const record = BpsKnowledgeLogic.normalizeCategory({
-      ...existing, id: existing?.id || uid('kbcat'), name: node.querySelector('#knowledgeCategoryName').value,
-      parentId: node.querySelector('#knowledgeCategoryParent').value || null,
-      order: existing?.order ?? state.data.knowledgeCategories.length,
-      createdAt: existing?.createdAt || nowISO(), updatedAt: nowISO(),
+    await withBusyButton(button, 'Сохранение…', async () => {
+      const record = BpsKnowledgeLogic.normalizeCategory({
+        ...existing, id: existing?.id || uid('kbcat'), name: node.querySelector('#knowledgeCategoryName').value,
+        parentId: node.querySelector('#knowledgeCategoryParent').value || null,
+        order: existing?.order ?? state.data.knowledgeCategories.length,
+        createdAt: existing?.createdAt || nowISO(), updatedAt: nowISO(),
+      });
+      await dbPut('knowledgeCategories', record); closeModal({ immediate:true }); toast(existing ? 'Раздел обновлён' : 'Раздел создан'); await refreshData(); openKnowledgeCategoryManager();
     });
-    await dbPut('knowledgeCategories', record); closeModal({ immediate:true }); toast(existing ? 'Раздел обновлён' : 'Раздел создан'); await refreshData(); openKnowledgeCategoryManager();
   });
   node.querySelector('#deleteKnowledgeCategory')?.addEventListener('click', () => {
     const hasArticles = state.data.knowledgeArticles.some(item => item.categoryId === existing.id);

@@ -1,9 +1,9 @@
-// Релиз 2.6.1: восстановление интерфейса и изолированная интеграция Web Push.
-const VERSION = '2.6.1';
+// Релиз 2.7.0: документы в базе знаний, controlled update и изолированная интеграция Web Push.
+const VERSION = '2.7.0';
 const CACHE = `bps-pult-${VERSION}`;
 const APP_SHELL = [
   './', './index.html', './styles.css', './stability-logic.js', './event-logic.js', './knowledge-logic.js', './productivity-logic.js',
-  './app.js', './push-notifications.js', './push-ui.js', './event-ui.js', './knowledge-ui.js', './manifest.webmanifest',
+  './app.js', './push-notifications.js', './push-ui.js', './event-ui.js', './knowledge-ui.js', './manifest.webmanifest', './PUSH-PRIVACY.md',
   './icon-192.png', './icon-512.png', './apple-touch-icon.png',
   './icon-192-dark.png', './icon-512-dark.png', './apple-touch-icon-dark.png',
   './icon-192-light.png', './icon-512-light.png', './apple-touch-icon-light.png',
@@ -11,7 +11,7 @@ const APP_SHELL = [
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)));
 });
 
 self.addEventListener('activate', event => {

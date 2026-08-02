@@ -273,26 +273,29 @@ function openEventEditor(initialDraft, isExisting, restoredDraft = null) {
     });
   }
 
-  node.querySelector('#saveEvent').addEventListener('click', async () => {
+  node.querySelector('#saveEvent').addEventListener('click', async event => {
+    const button = event.currentTarget;
     syncBasicFields();
     syncAssignments();
     const validation = BpsEventLogic.validateEvent(draft);
     validationMessages = [...validation.errors, ...validation.warnings];
     if (!validation.valid) { renderEditor(); body.scrollTo({ top:0, behavior:'smooth' }); return; }
-    const existingChecklist = isExisting ? initialDraft.checklist : [];
-    draft = BpsEventLogic.normalizeEvent({
-      ...draft,
-      id: draft.id || uid('event'),
-      date: draft.date ? new Date(draft.date).toISOString() : '',
-      checklist: BpsEventLogic.generateChecklist(draft, existingChecklist),
-      createdAt: draft.createdAt || nowISO(),
-      updatedAt: nowISO(),
+    await withBusyButton(button, 'Сохранение…', async () => {
+      const existingChecklist = isExisting ? initialDraft.checklist : [];
+      draft = BpsEventLogic.normalizeEvent({
+        ...draft,
+        id: draft.id || uid('event'),
+        date: draft.date ? new Date(draft.date).toISOString() : '',
+        checklist: BpsEventLogic.generateChecklist(draft, existingChecklist),
+        createdAt: draft.createdAt || nowISO(),
+        updatedAt: nowISO(),
+      });
+      await dbPut('events', draft);
+      await draftController?.clear();
+      closeModal();
+      toast(isExisting ? 'Мероприятие обновлено' : 'Мероприятие создано');
+      await render();
     });
-    await dbPut('events', draft);
-    await draftController?.clear();
-    closeModal();
-    toast(isExisting ? 'Мероприятие обновлено' : 'Мероприятие создано');
-    await render();
   });
 
   renderEditor();

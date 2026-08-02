@@ -59,9 +59,18 @@ const malformedLinks = K.normalizeArticle({ linkedEquipmentIds:'eq1', linkedEven
 assert.deepEqual(malformedLinks.linkedEquipmentIds,[]);
 assert.deepEqual(malformedLinks.linkedEventIds,[]);
 
+const documentAttachment = { id:'doc1', name:'Регламент.pdf', mime:'application/pdf', size:3, data:'data:application/pdf;base64,AQID' };
+const withDocument = K.normalizeArticle({ id:'doc-article', title:'Регламент', categoryId:'root', type:'reference', attachments:[documentAttachment] });
+assert.equal(withDocument.attachments.length, 1, 'Документ должен сохраняться в материале');
+assert.equal(K.filterArticles([withDocument], categories, { query:'регламент.pdf' }).length, 1, 'Имя документа должно участвовать в поиске');
+assert.equal(K.validateAttachments([documentAttachment]).valid, true);
+assert.equal(K.validateAttachments([{ ...documentAttachment, size:4 }]).valid, false, 'Размер документа должен совпадать с данными');
+assert.equal(K.validateAttachments(Array.from({ length: K.MAX_ATTACHMENTS + 1 }, (_, index) => ({ ...documentAttachment, id:`doc-${index}` }))).valid, false, 'Лимит документов должен проверяться');
+assert.equal(K.validateAttachments([{ ...documentAttachment, mime:'application/x-msdownload' }]).valid, false, 'Исполняемые типы не должны приниматься');
+
 let capped = K.normalizeArticle({id:'capped',title:'До',categoryId:'root',type:'reference',versions:Array.from({length:20},(_,index)=>({id:`v${index}`,number:index+10,data:{}}))});
 capped = K.mergeForSave(capped,{...capped,title:'После'},'2026-08-02T00:00:00Z');
 assert.equal(capped.versions.length,20,'История должна оставаться ограниченной');
 assert.equal(capped.versions.at(-1).number,30,'Номер версии не должен повторяться после ограничения истории');
 
-console.log('knowledge-logic: 14 сценариев пройдены');
+console.log('knowledge-logic: 17 сценариев пройдены');
