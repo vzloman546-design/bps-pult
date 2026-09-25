@@ -164,11 +164,32 @@
     requestAnimationFrame(() => els.tabs.querySelector('.tab.active')?.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'}));
   }
 
-  function switchSection(id) {
+  function sectionIndex(id) {
+    return SECTIONS.findIndex(section => section.id === id);
+  }
+
+  function animateView(className) {
+    return new Promise(resolve => {
+      els.view.classList.remove('view-enter-forward','view-enter-back','view-leave-forward','view-leave-back');
+      const done = () => {
+        els.view.classList.remove(className);
+        resolve();
+      };
+      els.view.addEventListener('animationend', done, { once: true });
+      requestAnimationFrame(() => els.view.classList.add(className));
+      setTimeout(done, 360);
+    });
+  }
+
+  async function switchSection(id) {
+    if (!id || id === activeSection) return;
+    const direction = sectionIndex(id) >= sectionIndex(activeSection) ? 'forward' : 'back';
+    await animateView(direction === 'forward' ? 'view-leave-forward' : 'view-leave-back');
     activeSection = id;
     localStorage.setItem('turnstileInspection.activeSection', id);
     render();
     window.scrollTo({top:0,behavior:'smooth'});
+    animateView(direction === 'forward' ? 'view-enter-forward' : 'view-enter-back');
   }
 
   function render() {
@@ -312,7 +333,7 @@
   function renderConclusion() {
     const counts = [1,2,3,4].map(g=>gateCounts(g));
     els.view.innerHTML = `
-      <section class="section-card">
+      <section class="section-card center-title-card">
         <h2>Итоговое заключение</h2>
         <div class="gate-summary">
           <div class="metric"><strong>${counts.reduce((s,c)=>s+c.ok,0)}</strong><span>исправно</span></div>
