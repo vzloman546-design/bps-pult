@@ -7,6 +7,7 @@ import {
   getInspectionSummary,
   listInspections,
   reassignGate,
+  reopenGate,
   updateTurnstile
 } from './inspection-service.js';
 
@@ -39,6 +40,12 @@ export async function handleInspectionRoutes(request, env, parts, user) {
       requireAdmin(user);
       const input = await readJson(request);
       await reassignGate(env, inspectionId, gateNo, String(input.assigneeUserId || ''), user);
+      return json({ ok: true });
+    }
+
+    if (parts[5] === 'reopen' && request.method === 'PATCH') {
+      requireAdmin(user);
+      await reopenGate(env, inspectionId, gateNo, user);
       return json({ ok: true });
     }
 
