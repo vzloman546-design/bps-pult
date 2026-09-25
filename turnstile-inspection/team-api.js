@@ -249,6 +249,10 @@
       });
     },
 
+    async events(id) {
+      return (await request('/api/inspections/' + id + '/events')).events || [];
+    },
+
     async generationSnapshot(id) {
       return (await request(
         '/api/inspections/' + id + '/generation-snapshot'
