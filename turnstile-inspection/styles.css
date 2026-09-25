@@ -85,9 +85,16 @@ p { overflow-wrap: anywhere; }
 .appbar-main {
   min-height: 40px;
   display: grid;
-  grid-template-columns: minmax(0,1fr) auto;
+  grid-template-columns: minmax(0,1fr) auto minmax(0,1fr);
   align-items: center;
-  gap: var(--s3);
+  gap: var(--s2);
+}
+
+.appbar-spacer { min-width: 0; }
+
+.appbar-title-wrap {
+  min-width: 0;
+  text-align: center;
 }
 
 h1 {
@@ -98,6 +105,7 @@ h1 {
 }
 
 .icon-button {
+  justify-self: end;
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -120,11 +128,19 @@ h1 {
   gap: var(--s2);
   overflow-x: auto;
   overflow-y: hidden;
-  padding: var(--s2) var(--gutter) var(--s3);
+  padding: var(--s2) 0 var(--s3);
+  scroll-padding-inline: var(--gutter);
   scrollbar-width: none;
   overscroll-behavior-x: contain;
   scroll-snap-type: x proximity;
   -webkit-overflow-scrolling: touch;
+}
+
+.tabs::before,
+.tabs::after {
+  content: "";
+  flex: 0 0 var(--gutter);
+  width: var(--gutter);
 }
 
 .tabs::-webkit-scrollbar { display: none; }
@@ -162,6 +178,29 @@ h1 {
   padding: var(--s4) var(--gutter) var(--s6);
   display: grid;
   gap: var(--s3);
+  transform-origin: center top;
+}
+
+.view.view-leave-forward { animation: pageLeaveForward .17s ease both; }
+.view.view-enter-forward { animation: pageEnterForward .26s cubic-bezier(.2,.8,.2,1) both; }
+.view.view-leave-back { animation: pageLeaveBack .17s ease both; }
+.view.view-enter-back { animation: pageEnterBack .26s cubic-bezier(.2,.8,.2,1) both; }
+
+@keyframes pageLeaveForward {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: .08; transform: translateX(-22px); }
+}
+@keyframes pageEnterForward {
+  from { opacity: 0; transform: translateX(22px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes pageLeaveBack {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: .08; transform: translateX(22px); }
+}
+@keyframes pageEnterBack {
+  from { opacity: 0; transform: translateX(-22px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 .section-card {
@@ -195,6 +234,10 @@ h1 {
 }
 
 .center-card { text-align: center; }
+
+.center-title-card > h2 {
+  text-align: center;
+}
 
 .help {
   margin: 0 0 var(--s4);
@@ -582,7 +625,7 @@ h1 {
 
 /* ---------- Responsive grid ---------- */
 @media (max-width: 680px) {
-  :root { --gutter: 10px; }
+  :root { --gutter: 14px; }
 
   .appbar { padding-bottom: 6px; }
 
@@ -637,10 +680,16 @@ h1 {
 }
 
 @media (max-width: 380px) {
-  .appbar-main { grid-template-columns: minmax(0,1fr); }
+  .appbar-main {
+    grid-template-columns: minmax(0,1fr) auto minmax(0,1fr);
+    gap: 6px;
+  }
+
+  h1 { font-size: 18px; }
 
   .icon-button {
-    justify-self: start;
+    justify-self: end;
+    padding-inline: 9px;
   }
 
   .gate-summary { gap: 6px; }
@@ -683,4 +732,14 @@ h1 {
   .row-number,
   .status-pill { background: #29333e; }
   .note { background: #18304a; color: #bddbfa; }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .view.view-leave-forward,
+  .view.view-enter-forward,
+  .view.view-leave-back,
+  .view.view-enter-back {
+    animation: none !important;
+  }
 }
