@@ -33,6 +33,10 @@ jobs:
           node --check team-app.js
           node --check sw.js
 
+      - name: Validate D1 schema
+        working-directory: turnstile-inspection/cloudflare
+        run: sqlite3 :memory: < schema.sql
+
       - name: Install Worker dependencies
         working-directory: turnstile-inspection/cloudflare
         run: npm install --no-audit --no-fund
