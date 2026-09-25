@@ -152,6 +152,7 @@ export default {
 
     try {
       const response = await handleApi(request, env);
+      if (response.status === 101) return response;
       return withCors(response, request, env);
     } catch (error) {
       if (error instanceof HttpError) {
