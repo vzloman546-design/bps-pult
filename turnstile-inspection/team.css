@@ -419,3 +419,25 @@
     background:#29333e;
   }
 }
+
+
+.team-install-banner {
+  width: min(var(--team-max), calc(100% - (var(--gutter) * 2)));
+  margin: 10px auto 0;
+  padding: 9px 10px 9px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.team-install-banner .btn {
+  flex: 0 0 auto;
+}
