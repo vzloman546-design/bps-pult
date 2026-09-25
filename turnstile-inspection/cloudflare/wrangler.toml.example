@@ -3,9 +3,14 @@ main = "src/worker.js"
 compatibility_date = "2026-09-26"
 
 [vars]
-# Replace after Cloudflare Pages project is created.
+# После создания Cloudflare Pages здесь будет реальный *.pages.dev origin.
+# Можно перечислить несколько origin через запятую на период миграции.
 ALLOWED_ORIGIN = "https://REPLACE.pages.dev"
 SESSION_TTL_DAYS = "30"
+
+# Публичная часть VAPID-ключа. Приватная хранится только как secret.
+VAPID_PUBLIC_KEY = "REPLACE_VAPID_PUBLIC_KEY"
+VAPID_SUBJECT = "mailto:REPLACE@example.com"
 
 [[d1_databases]]
 binding = "DB"
@@ -24,7 +29,8 @@ class_name = "InspectionRoom"
 tag = "v1"
 new_sqlite_classes = ["InspectionRoom"]
 
-# Secrets to create with wrangler secret put:
-# SESSION_PEPPER
-# VAPID_PRIVATE_KEY
-# VAPID_PUBLIC_KEY
+# Secrets, которые задаются через wrangler secret put и никогда не коммитятся:
+# SESSION_PEPPER      - случайная строка для хеширования токенов сессий
+# PASSWORD_PEPPER     - отдельная случайная строка для паролей
+# BOOTSTRAP_TOKEN     - одноразовая защита первого администратора
+# VAPID_PRIVATE_KEY   - приватная часть ключа Web Push
