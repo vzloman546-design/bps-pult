@@ -188,6 +188,13 @@
       return (await request('/api/inspections/' + id)).inspection;
     },
 
+    cancelInspection(id) {
+      return request('/api/inspections/' + id + '/cancel', {
+        method: 'PATCH',
+        json: {}
+      });
+    },
+
     async createInspection(input) {
       return (await request('/api/inspections', {
         method: 'POST',
