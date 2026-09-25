@@ -244,9 +244,26 @@ export async function getGate(env, inspectionId, gateNo, user) {
   ).bind(inspectionId, gateNo).first();
 
   if (!gate) throw new HttpError(404, 'gate_not_found');
+
+  let readOnly = false;
+
   if (user.role !== 'admin' && gate.assignee_user_id !== user.id) {
-    throw new HttpError(403, 'gate_forbidden');
+    const participated = await env.DB.prepare(
+      `SELECT 1 AS ok
+       FROM inspection_events
+       WHERE inspection_id=? AND gate_no=? AND actor_user_id=?
+       LIMIT 1`
+    ).bind(inspectionId, gateNo, user.id).first();
+
+    if (!participated?.ok) throw new HttpError(403, 'gate_forbidden');
+    readOnly = true;
   }
+
+  const inspection = await env.DB.prepare(
+    `SELECT status FROM inspections WHERE id=?`
+  ).bind(inspectionId).first();
+
+  if (inspection?.status !== 'active') readOnly = true;
 
   const checks = (await env.DB.prepare(
     `SELECT turnstile_code,visual,power,reader,final_status,remarks,
@@ -262,6 +279,7 @@ export async function getGate(env, inspectionId, gateNo, user) {
     status: gate.status,
     assigneeUserId: gate.assignee_user_id,
     assigneeName: gate.assignee_name,
+    readOnly,
     checks: checks.map(c => ({
       code: c.turnstile_code,
       visual: c.visual,
@@ -282,6 +300,18 @@ export async function reassignGate(env, inspectionId, gateNo, toUserId, actor) {
   ).bind(inspectionId, gateNo).first();
 
   if (!gate) throw new HttpError(404, 'gate_not_found');
+
+  const inspection = await env.DB.prepare(
+    `SELECT status FROM inspections WHERE id=?`
+  ).bind(inspectionId).first();
+
+  if (!inspection || inspection.status !== 'active') {
+    throw new HttpError(409, 'inspection_not_active');
+  }
+
+  if (gate.status === 'completed') {
+    throw new HttpError(409, 'gate_already_completed');
+  }
 
   const target = await env.DB.prepare(
     `SELECT id,active FROM users WHERE id=?`
@@ -340,6 +370,15 @@ export async function updateTurnstile(env, inspectionId, gateNo, code, patch, us
   ).bind(inspectionId, gateNo).first();
 
   if (!gate) throw new HttpError(404, 'gate_not_found');
+
+  const inspection = await env.DB.prepare(
+    `SELECT status FROM inspections WHERE id=?`
+  ).bind(inspectionId).first();
+
+  if (!inspection || inspection.status !== 'active') {
+    throw new HttpError(409, 'inspection_not_active');
+  }
+
   if (user.role !== 'admin' && gate.assignee_user_id !== user.id) {
     throw new HttpError(403, 'gate_forbidden');
   }
@@ -407,6 +446,63 @@ export async function updateTurnstile(env, inspectionId, gateNo, code, patch, us
   ).run();
 
   return recomputeCompletion(env, inspectionId, gateNo, user.id);
+}
+
+export async function reopenGate(env, inspectionId, gateNo, actor) {
+  const gate = await env.DB.prepare(
+    `SELECT * FROM inspection_gates
+     WHERE inspection_id=? AND gate_no=?`
+  ).bind(inspectionId, gateNo).first();
+
+  if (!gate) throw new HttpError(404, 'gate_not_found');
+
+  const inspection = await env.DB.prepare(
+    `SELECT status FROM inspections WHERE id=?`
+  ).bind(inspectionId).first();
+
+  if (!inspection) throw new HttpError(404, 'inspection_not_found');
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE inspections
+       SET status='active',completed_at=NULL,updated_at=datetime('now')
+       WHERE id=?`
+    ).bind(inspectionId),
+    env.DB.prepare(
+      `UPDATE inspection_gates
+       SET status='in_progress',completed_at=NULL,updated_at=datetime('now')
+       WHERE id=?`
+    ).bind(gate.id),
+    env.DB.prepare(
+      `INSERT INTO inspection_events
+        (inspection_id,gate_no,actor_user_id,event_type,payload_json)
+       VALUES (?,?,?,?,?)`
+    ).bind(
+      inspectionId,
+      gateNo,
+      actor.id,
+      'gate_reopened',
+      JSON.stringify({ previousStatus: gate.status })
+    )
+  ]);
+
+  if (gate.assignee_user_id) {
+    await notifyUser(
+      env,
+      gate.assignee_user_id,
+      'gate_reopened',
+      `${gateNo} гейт открыт для исправления`,
+      'Администратор вернул гейт в работу. Откройте приложение и внесите исправления.',
+      inspectionId,
+      gateNo
+    );
+  }
+
+  await broadcastInspection(env, inspectionId, {
+    type: 'gate_reopened',
+    inspectionId,
+    gateNo
+  });
 }
 
 export async function recomputeCompletion(env, inspectionId, gateNo, actorUserId) {
