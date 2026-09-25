@@ -124,6 +124,12 @@
       return copy;
     },
 
+    patchCachedGate(item) {
+      const cache = cacheMap();
+      mergeCheckIntoCachedGate(cache, item);
+      writeJson(CACHE_KEY, cache);
+    },
+
     upsertCheckMutation(item) {
       const queue = this.getQueue();
       const userId = currentUserId();
