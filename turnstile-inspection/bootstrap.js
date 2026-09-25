@@ -1,5 +1,0 @@
-(async()=>{
-  const sets={"assets":["assets-01.txt","assets-02.txt","assets-03.txt","assets-04.txt","assets-05.txt","assets-06.txt","assets-07.txt","assets-08.txt","assets-09.txt","assets-10.txt","assets-11.txt","assets-12.txt","assets-13.txt","assets-14.txt","assets-15.txt","assets-16.txt","assets-17.txt","assets-18.txt","assets-19.txt"],"app":["app-01.txt","app-02.txt","app-03.txt"]};
-  const load=async names=>{const parts=[];for(const n of names){const r=await fetch(n);if(!r.ok)throw new Error(`Не удалось загрузить ${n}`);parts.push(await r.text());}return parts.join('');};
-  try{const assetSrc=await load(sets.assets);(0,eval)(assetSrc);const appSrc=await load(sets.app);(0,eval)(appSrc);}catch(e){document.body.innerHTML=`<main style="font-family:system-ui;padding:24px"><h1>Ошибка запуска</h1><p>${String(e.message||e)}</p><p>При первом запуске нужен интернет. Затем приложение работает офлайн.</p></main>`;console.error(e);}
-})();
