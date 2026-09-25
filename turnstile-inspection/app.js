@@ -657,12 +657,79 @@
 
   function printGenerated(){
     const w=window.open('', '_blank');
-    if(w) w.document.write('<!doctype html><title>Подготовка печати…</title><body style="font-family:sans-serif;padding:24px">Подготовка страниц…</body>');
+    if(w) {
+      w.document.open();
+      w.document.write('<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Подготовка печати…</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:24px;background:#f3f6f9;color:#17202a}</style></head><body>Подготовка страниц…</body></html>');
+      w.document.close();
+    }
     withLoading('Подготавливаются страницы для печати…',async()=>{
       const pages=await renderPages();
-      if(!w){ const pdf=await buildPdfFromJpegs(pages); const u=URL.createObjectURL(pdf); window.location.href=u; return; }
+      if(!w){
+        const pdf=await buildPdfFromJpegs(pages);
+        const u=URL.createObjectURL(pdf);
+        window.location.href=u;
+        return;
+      }
       const urls=pages.map(p=>URL.createObjectURL(p.blob));
-      w.document.open(); w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Печать акта</title><style>@page{size:A4 landscape;margin:0}html,body{margin:0;padding:0;background:white}.page{width:297mm;height:210mm;display:block;page-break-after:always;object-fit:fill}.page:last-child{page-break-after:auto}@media screen{body{background:#777}.page{margin:10px auto;box-shadow:0 2px 18px #222}}</style></head><body>${urls.map(u=>`<img class="page" src="${u}">`).join('')}<script>window.onload=()=>setTimeout(()=>window.print(),350)<\/script></body></html>`); w.document.close();
+      const pageMarkup=urls.map((u,i)=>`<img class="page" src="${u}" alt="Страница ${i+1}">`).join('');
+      w.document.open();
+      w.document.write(`<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f3f6f9">
+  <title>Печать акта</title>
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#72777d;color:#17202a}
+    .toolbar{
+      position:sticky;top:0;z-index:20;
+      display:flex;align-items:center;justify-content:center;gap:10px;
+      padding:calc(10px + env(safe-area-inset-top)) 12px 10px;
+      background:rgba(255,255,255,.96);
+      border-bottom:1px solid #d9e1ea;
+      backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)
+    }
+    .toolbar button{
+      min-height:44px;border:0;border-radius:11px;padding:10px 18px;
+      font:700 15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      cursor:pointer
+    }
+    .print-btn{background:#0b5cab;color:white}
+    .close-btn{background:#e9eef4;color:#344255}
+    .hint{
+      padding:10px 12px;text-align:center;background:#f3f6f9;
+      color:#5f6c79;font-size:13px;line-height:1.4
+    }
+    .pages{padding:12px 0 calc(24px + env(safe-area-inset-bottom))}
+    .page{
+      width:min(297mm,calc(100vw - 24px));height:auto;display:block;
+      margin:0 auto 12px;background:white;box-shadow:0 3px 20px rgba(0,0,0,.32)
+    }
+    @page{size:A4 landscape;margin:0}
+    @media print{
+      html,body{background:white}
+      .toolbar,.hint{display:none!important}
+      .pages{padding:0}
+      .page{
+        width:297mm;height:210mm;margin:0;box-shadow:none;object-fit:fill;
+        page-break-after:always;break-after:page
+      }
+      .page:last-child{page-break-after:auto;break-after:auto}
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button class="print-btn" type="button" onclick="window.print()">Печать</button>
+    <button class="close-btn" type="button" onclick="window.close()">Закрыть</button>
+  </div>
+  <div class="hint">Проверь страницы и нажми «Печать». Панель управления в документ не попадёт.</div>
+  <main class="pages">${pageMarkup}</main>
+</body>
+</html>`);
+      w.document.close();
       setTimeout(()=>urls.forEach(URL.revokeObjectURL),120000);
     });
   }
