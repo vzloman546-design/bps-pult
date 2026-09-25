@@ -57,6 +57,37 @@ export async function handleInspectionRoutes(request, env, parts, user) {
     }
   }
 
+  if (parts[3] === 'events' && request.method === 'GET') {
+    requireAdmin(user);
+
+    const rows = (await env.DB.prepare(
+      `SELECT e.id,e.gate_no,e.turnstile_code,e.event_type,e.payload_json,e.created_at,
+              u.id AS actor_user_id,u.display_name AS actor_name
+       FROM inspection_events e
+       LEFT JOIN users u ON u.id=e.actor_user_id
+       WHERE e.inspection_id=?
+       ORDER BY e.id DESC
+       LIMIT 250`
+    ).bind(inspectionId).all()).results || [];
+
+    return json({
+      events: rows.map(row => {
+        let payload = null;
+        try { payload = row.payload_json ? JSON.parse(row.payload_json) : null; } catch {}
+        return {
+          id: row.id,
+          gateNo: row.gate_no,
+          turnstileCode: row.turnstile_code,
+          type: row.event_type,
+          actorUserId: row.actor_user_id,
+          actorName: row.actor_name,
+          createdAt: row.created_at,
+          payload
+        };
+      })
+    });
+  }
+
   if (parts[3] === 'generation-snapshot' && request.method === 'GET') {
     if (!(await canAccessInspection(env, user, inspectionId))) {
       throw new HttpError(403, 'inspection_forbidden');
