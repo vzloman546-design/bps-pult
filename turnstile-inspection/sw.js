@@ -10,6 +10,7 @@ const STATIC_ASSETS = [
   './team-config.js',
   './team-storage.js',
   './team-api.js',
+  './team-install.js',
   './team-ui.js',
   './team-app.js',
   './pdf-renderer.js',
