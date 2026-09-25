@@ -19,17 +19,22 @@
   const state = {
     user: null,
     route: { name: 'boot' },
-    realtime: null,
+    realtime: [],
     refreshTimer: null,
     generating: new Set()
   };
 
   function closeRealtime() {
-    if (state.realtime) {
-      try { state.realtime.close(); } catch {}
-      state.realtime = null;
+    for (const socket of state.realtime || []) {
+      try { socket?.close(); } catch {}
     }
+    state.realtime = [];
     clearTimeout(state.refreshTimer);
+  }
+
+  function trackRealtime(socket) {
+    if (socket) state.realtime.push(socket);
+    return socket;
   }
 
   function setChrome({ back = false, nav = true, bell = true, context = '' } = {}) {
@@ -253,6 +258,20 @@
         route('gate', { inspectionId, gateNo, fromHome: true });
       });
     });
+
+    const inspectionIds = [...new Set(assignments.map(item => item.inspection.id))];
+    for (const inspectionId of inspectionIds) {
+      trackRealtime(api.connectRealtime(inspectionId, event => {
+        if (['gate_progress','gate_reassigned','inspection_completed'].includes(event.type)) {
+          clearTimeout(state.refreshTimer);
+          state.refreshTimer = setTimeout(() => {
+            if (state.route.name !== 'home') return;
+            closeRealtime();
+            renderInspectorHome().catch(() => {});
+          }, 450);
+        }
+      }));
+    }
   }
 
   function inspectionProgress(inspection) {
@@ -325,6 +344,20 @@
     els.app.querySelectorAll('[data-open-inspection]').forEach(button => {
       button.onclick = () => route('inspection', { inspectionId: Number(button.dataset.openInspection) });
     });
+
+    for (const inspection of active) {
+      trackRealtime(api.connectRealtime(inspection.id, event => {
+        if (['gate_progress','gate_reassigned','gate_reopened','inspection_completed','document_ready'].includes(event.type)) {
+          refreshBell().catch(() => {});
+          clearTimeout(state.refreshTimer);
+          state.refreshTimer = setTimeout(() => {
+            if (state.route.name !== 'home') return;
+            closeRealtime();
+            renderAdminHome().catch(() => {});
+          }, 450);
+        }
+      }));
+    }
   }
 
   async function renderHome() {
@@ -507,7 +540,7 @@
       };
     });
 
-    state.realtime = api.connectRealtime(state.route.inspectionId, event => {
+    trackRealtime(api.connectRealtime(state.route.inspectionId, event => {
       if (event.type === 'gate_progress' && event.gateNo === state.route.gateNo) {
         clearTimeout(state.refreshTimer);
         state.refreshTimer = setTimeout(() => {
@@ -520,7 +553,7 @@
       if (event.type === 'document_ready') {
         ui.toast('Акт сформирован и готов.');
       }
-    });
+    }));
   }
 
   async function renderNewInspection() {
@@ -818,7 +851,7 @@
       };
     }
 
-    state.realtime = api.connectRealtime(inspection.id, event => {
+    trackRealtime(api.connectRealtime(inspection.id, event => {
       if (['gate_progress','gate_reassigned','inspection_completed','document_ready'].includes(event.type)) {
         clearTimeout(state.refreshTimer);
         state.refreshTimer = setTimeout(() => {
@@ -828,7 +861,7 @@
       if (event.type === 'inspection_completed') {
         ensureDocumentGenerated(inspection.id).catch(() => {});
       }
-    });
+    }));
   }
 
   async function renderHistory() {
@@ -1107,6 +1140,16 @@
 
   window.addEventListener('offline', () => {
     ui.toast('Нет сети. Изменения будут сохранены на телефоне.', 3500);
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !state.user) return;
+    refreshBell().catch(() => {});
+
+    if (state.route.name === 'home') {
+      closeRealtime();
+      renderHome().catch(() => {});
+    }
   });
 
   boot().catch(handleError);
