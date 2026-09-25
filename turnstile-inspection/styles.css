@@ -158,12 +158,14 @@ h1 {
   font-size: 13px;
   line-height: 1;
   font-weight: 700;
+  transition: background-color .22s ease, color .22s ease, border-color .22s ease, transform .22s ease;
 }
 
 .tab.active {
   color: #fff;
   border-color: var(--brand);
   background: var(--brand);
+  transform: translateY(-1px);
 }
 
 .tab.complete:not(.active)::after {
@@ -179,28 +181,7 @@ h1 {
   display: grid;
   gap: var(--s3);
   transform-origin: center top;
-}
-
-.view.view-leave-forward { animation: pageLeaveForward .17s ease both; }
-.view.view-enter-forward { animation: pageEnterForward .26s cubic-bezier(.2,.8,.2,1) both; }
-.view.view-leave-back { animation: pageLeaveBack .17s ease both; }
-.view.view-enter-back { animation: pageEnterBack .26s cubic-bezier(.2,.8,.2,1) both; }
-
-@keyframes pageLeaveForward {
-  from { opacity: 1; transform: translateX(0); }
-  to { opacity: .08; transform: translateX(-22px); }
-}
-@keyframes pageEnterForward {
-  from { opacity: 0; transform: translateX(22px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-@keyframes pageLeaveBack {
-  from { opacity: 1; transform: translateX(0); }
-  to { opacity: .08; transform: translateX(22px); }
-}
-@keyframes pageEnterBack {
-  from { opacity: 0; transform: translateX(-22px); }
-  to { opacity: 1; transform: translateX(0); }
+  will-change: transform, opacity;
 }
 
 .section-card {
@@ -735,11 +716,3 @@ h1 {
 }
 
 
-@media (prefers-reduced-motion: reduce) {
-  .view.view-leave-forward,
-  .view.view-enter-forward,
-  .view.view-leave-back,
-  .view.view-enter-back {
-    animation: none !important;
-  }
-}
