@@ -1,5 +1,5 @@
-const CACHE = 'turnstile-inspection-v11';
-const ASSETS = ["./","./index.html","./styles.css?v=11","./app.js?v=11","./manifest.webmanifest","./favicon-v11.png","./apple-touch-icon-v11.png","./turnstile-icon-192-v11.png","./turnstile-icon-512-v11.png","./assets-init.js","./asset-page1-1.js","./asset-page2-1.js","./asset-page2-2.js","./asset-page3-1.js","./asset-page3-2.js","./asset-page4-1.js","./asset-page4-2.js","./asset-page5-1.js","./asset-page5-2.js","./asset-page6-1.js","./asset-atlas-1.js","./asset-atlas-2.js","./asset-atlas-3.js","./assets-meta.js","./assets-final.js"];
+const CACHE = 'turnstile-inspection-v12';
+const ASSETS = ["./","./index.html","./styles.css?v=12","./app.js?v=12","./manifest.webmanifest","./favicon-v11.png","./apple-touch-icon-v11.png","./turnstile-icon-192-v11.png","./turnstile-icon-512-v11.png","./assets-init.js","./asset-page1-1.js","./asset-page2-1.js","./asset-page2-2.js","./asset-page3-1.js","./asset-page3-2.js","./asset-page4-1.js","./asset-page4-2.js","./asset-page5-1.js","./asset-page5-2.js","./asset-page6-1.js","./asset-atlas-1.js","./asset-atlas-2.js","./asset-atlas-3.js","./assets-meta.js","./assets-final.js"];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
