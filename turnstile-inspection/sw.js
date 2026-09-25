@@ -14,6 +14,7 @@ const STATIC_ASSETS = [
   './team-app.js',
   './pdf-renderer.js',
   './manifest.webmanifest',
+  './team-manifest.webmanifest',
   './favicon-v11.png',
   './apple-touch-icon-v11.png',
   './turnstile-icon-192-v11.png',
