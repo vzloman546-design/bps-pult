@@ -11,7 +11,6 @@
   const MONTHS_GEN = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
   const STATUS_OPTIONS = ['', 'Исправно', 'Требует обслуживания', 'Неисправно'];
   const SECTIONS = [
-    { id: 'general', label: 'Общие данные' },
     { id: 'gate1', label: '1 гейт' },
     { id: 'gate2', label: '2 гейт' },
     { id: 'gate3', label: '3 гейт' },
@@ -43,7 +42,8 @@
     dialogOk: document.getElementById('dialogOk')
   };
 
-  let activeSection = localStorage.getItem('turnstileInspection.activeSection') || 'general';
+  let activeSection = localStorage.getItem('turnstileInspection.activeSection') || 'gate1';
+  if (!SECTIONS.some(section => section.id === activeSection)) activeSection = 'gate1';
   let state = loadState();
   let saveTimer = null;
   let toastTimer = null;
@@ -103,8 +103,8 @@
   }
 
   function queueSave() {
-    els.saveDot.classList.add('saving');
-    els.saveState.textContent = 'Сохранение…';
+    els.saveDot?.classList.add('saving');
+    if (els.saveState) els.saveState.textContent = 'Сохранение…';
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 180);
   }
@@ -112,8 +112,8 @@
   function saveNow() {
     state.updatedAt = Date.now();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    els.saveDot.classList.remove('saving');
-    els.saveState.textContent = 'Сохранено локально на устройстве';
+    els.saveDot?.classList.remove('saving');
+    if (els.saveState) els.saveState.textContent = '';
   }
 
   function escapeHtml(v='') {
@@ -152,7 +152,6 @@
   }
 
   function sectionComplete(id) {
-    if (id === 'general') return !!(state.general.organization && state.general.object && state.general.date && state.general.inspectors);
     if (/^gate[1-4]$/.test(id)) return gateCounts(+id.slice(-1)).blank === 0;
     if (id === 'conclusion') return !!state.conclusion.generalCondition;
     if (id === 'export') return totalStatusCounts().blank === 0;
@@ -174,8 +173,7 @@
 
   function render() {
     renderTabs();
-    if (activeSection === 'general') renderGeneral();
-    else if (/^gate[1-4]$/.test(activeSection)) renderGate(+activeSection.slice(-1));
+    if (/^gate[1-4]$/.test(activeSection)) renderGate(+activeSection.slice(-1));
     else if (activeSection === 'conclusion') renderConclusion();
     else renderExport();
     renderFooter();
@@ -239,9 +237,8 @@
   function renderGate(g) {
     const c = gateCounts(g);
     els.view.innerHTML = `
-      <section class="section-card">
+      <section class="section-card gate-header-card">
         <h2>${g} гейт</h2>
-        <p class="help">Сначала можно отметить весь гейт как исправный, затем открыть только турникеты с замечаниями и изменить их данные.</p>
         <div class="gate-summary">
           <div class="metric"><strong>${c.total-c.blank}</strong><span>заполнено</span></div>
           <div class="metric"><strong>${c.ok}</strong><span>исправно</span></div>
@@ -253,8 +250,6 @@
       </section>
       <section class="section-card">
         <div class="quickbar">
-          <button type="button" id="allOk" class="btn success small">Все исправны</button>
-          <button type="button" id="expandIssues" class="btn secondary small">Открыть с замечаниями</button>
           <button type="button" id="clearGate" class="btn secondary small">Очистить гейт</button>
         </div>
         <div class="turnstile-list">
@@ -291,15 +286,6 @@
     });
     els.view.querySelectorAll('.one-ok').forEach(b => b.addEventListener('click',()=>{ markTurnstileOk(g,+b.dataset.index); renderGate(g); renderTabs(); }));
     els.view.querySelectorAll('.one-clear').forEach(b => b.addEventListener('click',()=>{ clearTurnstile(g,+b.dataset.index); renderGate(g); renderTabs(); }));
-    els.view.querySelector('#allOk').onclick = () => {
-      state.gates[g].forEach(t => Object.assign(t,{visual:'Исправно',power:'Исправно',reader:'Исправно',status:'Исправно',remarks:''}));
-      queueSave(); renderGate(g); renderTabs(); toast(`${g} гейт отмечен как исправный`);
-    };
-    els.view.querySelector('#expandIssues').onclick = () => {
-      let n=0;
-      els.view.querySelectorAll('.turnstile').forEach((d,i)=>{ const t=state.gates[g][i]; d.open = t.status !== 'Исправно' || !!t.remarks; if(d.open)n++; });
-      toast(n ? `Открыто: ${n}` : 'Замечаний в этом гейте нет');
-    };
     els.view.querySelector('#clearGate').onclick = async () => {
       if (await confirmAction('Очистить данные гейта?', `Все отметки по ${g} гейту будут удалены только из текущего акта.`)) {
         state.gates[g] = GATE_CODES[g].map(makeDefaultTurnstile); queueSave(); renderGate(g); renderTabs();
@@ -328,7 +314,6 @@
     els.view.innerHTML = `
       <section class="section-card">
         <h2>Итоговое заключение</h2>
-        <p class="help">Количество по категориям вычисляется автоматически по полю «Итоговое состояние» каждого турникета.</p>
         <div class="gate-summary">
           <div class="metric"><strong>${counts.reduce((s,c)=>s+c.ok,0)}</strong><span>исправно</span></div>
           <div class="metric"><strong>${counts.reduce((s,c)=>s+c.service,0)}</strong><span>обслуживание</span></div>
@@ -342,19 +327,8 @@
           <div class="field"><label>Рекомендации и необходимые работы</label><textarea id="recommendations" class="textarea"></textarea></div>
           <div class="field"><label>Срок устранения выявленных замечаний</label><input id="deadline" class="input"></div>
         </div>
-      </section>
-      <section class="section-card">
-        <h3>Лица, проводившие осмотр</h3>
-        <p class="help">Ф.И.О./должность и дата будут поставлены над линиями подписи. Саму подпись можно поставить после печати.</p>
-        <div class="form-grid">
-          ${[0,1,2].map(i=>`<div class="field"><label>${i+1}. Должность / Ф.И.О.</label><input id="signer-${i}" class="input"></div><div class="field"><label>Дата</label><input id="signerDate-${i}" class="input" type="date"></div>`).join('')}
-        </div>
       </section>`;
     for(const k of ['generalCondition','faults','recommendations','deadline']) bindValue(`#${k}`,()=>state.conclusion[k],v=>state.conclusion[k]=v);
-    for(let i=0;i<3;i++){
-      bindValue(`#signer-${i}`,()=>state.conclusion.signers[i].person,v=>state.conclusion.signers[i].person=v);
-      bindValue(`#signerDate-${i}`,()=>state.conclusion.signers[i].date,v=>state.conclusion.signers[i].date=v);
-    }
     els.view.querySelector('#autoConclusion').onclick = () => {
       const all = totalStatusCounts();
       state.conclusion.generalCondition = all.bad ? `По результатам осмотра выявлено ${all.bad} неисправных турникетов.` : all.service ? `Оборудование в целом работоспособно. ${all.service} турникетов требуют технического обслуживания.` : all.blank ? 'Техническое состояние оборудования будет определено после завершения осмотра всех турникетов.' : 'Оборудование исправно и работоспособно.';
@@ -369,9 +343,8 @@
   function renderExport() {
     const all = totalStatusCounts();
     els.view.innerHTML = `
-      <section class="section-card">
+      <section class="section-card center-card">
         <h2>Готовый PDF</h2>
-        <p class="help">Файл формируется полностью на устройстве. Интернет для экспорта, просмотра и печати не нужен.</p>
         <div class="gate-summary">
           <div class="metric"><strong>70</strong><span>турникетов</span></div>
           <div class="metric"><strong>${all.ok}</strong><span>исправно</span></div>
@@ -380,13 +353,13 @@
         </div>
         ${all.blank ? `<div class="note" style="margin-bottom:12px">Не заполнено итоговое состояние у ${all.blank} турникетов. Экспорт всё равно доступен, незаполненные ячейки останутся пустыми.</div>` : ''}
         <div class="export-grid">
-          <div class="export-card"><h3>Скачать PDF</h3><p>Сохранить готовый пятистраничный акт на устройстве.</p><button id="downloadPdf" class="btn primary" type="button">Экспортировать PDF</button></div>
+          <div class="export-card"><h3>Скачать PDF</h3><p>Сохранить готовый шестистраничный акт на устройстве.</p><button id="downloadPdf" class="btn primary" type="button">Экспортировать PDF</button></div>
           <div class="export-card"><h3>Отправить</h3><p>Открыть системное меню «Поделиться» и выбрать Telegram, WhatsApp, почту и т. п.</p><button id="sharePdf" class="btn primary" type="button">Поделиться PDF</button></div>
           <div class="export-card"><h3>Распечатать</h3><p>Открыть системное окно печати с листами A4 в альбомной ориентации.</p><button id="printPdf" class="btn secondary" type="button">Печать</button></div>
           <div class="export-card"><h3>Предпросмотр</h3><p>Открыть сформированный PDF в новой вкладке без сохранения данных на сервере.</p><button id="previewPdf" class="btn secondary" type="button">Открыть PDF</button></div>
         </div>
       </section>
-      <section class="section-card">
+      <section class="section-card center-card">
         <h3>Управление локальными данными</h3>
         <div class="quickbar"><button id="newAct" class="btn warning" type="button">Новый акт / очистить форму</button></div>
         <p class="help">Очистка удаляет только текущие заполненные данные из локального хранилища этого браузера. Само PWA и шаблон остаются установленными.</p>
@@ -407,7 +380,7 @@
     els.view.querySelector('#printPdf').onclick = () => printGenerated();
     els.view.querySelector('#newAct').onclick = async () => {
       if(await confirmAction('Начать новый акт?', 'Все заполненные поля текущего акта будут очищены.')) {
-        state=makeDefaultState(); saveNow(); activeSection='general'; render(); toast('Создан новый пустой акт');
+        state=makeDefaultState(); saveNow(); activeSection='gate1'; localStorage.setItem('turnstileInspection.activeSection', activeSection); render(); toast('Создан новый пустой акт');
       }
     };
   }
@@ -529,27 +502,8 @@
   }
   function formatShortDate(iso){ if(!iso)return''; const [y,m,d]=iso.split('-'); return `${d}.${m}.${y}`; }
 
-  function overlayPage1(ctx,assets) {
-    drawLineValue(ctx,assets,state.general.organization,231.1,415.6,88.4,10);
-    drawLineValue(ctx,assets,state.general.actNo,618,672,92.0,10,'center');
-    drawLineValue(ctx,assets,state.general.object,231.1,415.6,116.6,10);
-    if(state.general.date) {
-      ctx.fillStyle='#fff'; ctx.fillRect(px(616.5),px(105.0),px(143.5),px(20));
-      drawLineValue(ctx,assets,formatDateRu(state.general.date),618,752,120.2,10);
-    }
-    drawLineValue(ctx,assets,state.general.place,231.1,415.6,144.8,10);
-    const time = state.general.timeFrom || state.general.timeTo ? `с ${state.general.timeFrom || '____'} до ${state.general.timeTo || '____'}` : '';
-    if(time) {
-      ctx.fillStyle='#fff'; ctx.fillRect(px(616.5),px(134.0),px(143.5),px(19));
-      drawLineValue(ctx,assets,time,618,752,148.4,10);
-    }
-    drawLineValue(ctx,assets,state.general.inspectors,106.4,520.4,173.4,10);
-    drawLineValue(ctx,assets,state.general.basis,161.35,530.35,185.8,10);
-
-    const x=[141,603,1063,1524,1984,2445,2905,3365];
-    const y=[1102,1195,1289,1383,1478,1572,1666,1760,1854,1948,2043];
-    drawGateRows(ctx,assets,1,x,y);
-    drawGateSummary(ctx,assets,1,505.5);
+  function overlayPage1() {
+    // Титульная страница нового шаблона не содержит заполняемых полей.
   }
 
   function drawGateRows(ctx,assets,g,x,y){
@@ -558,68 +512,79 @@
       const top=y[i], bottom=y[i+1], h=bottom-top;
       const vals=[rows[i].visual,rows[i].power,rows[i].reader,rows[i].status,rows[i].remarks];
       for(let c=0;c<5;c++){
-        drawTextBox(ctx,assets,vals[c],{x:x[c+2]+2,y:top+2,w:x[c+3]-x[c+2]-4,h:h-4},{align:c===4?'left':'center',pad:c===4?12:8,sizes:c===4?[8.5,8,7.5,7]:[9,8.5,8,7.5]});
+        drawTextBox(ctx,assets,vals[c],{x:x[c+2]+3,y:top+3,w:x[c+3]-x[c+2]-6,h:h-6},{
+          align:c===4?'left':'center',
+          pad:c===4?12:8,
+          sizes:c===4?[8.5,8,7.5,7]:[9,8.5,8,7.5]
+        });
       }
     }
   }
 
-  function drawGateSummary(ctx,assets,g,lineY){
+  function drawGateSummaryPx(ctx,assets,g,slots,y1,y2){
     const c=gateCounts(g);
-    const slots=[
-      [303.026,327.026,c.total],
-      [375.450,399.450,c.ok],
-      [495.146,519.146,c.service],
-      [575.714,599.714,c.bad]
-    ];
-    for(const [x1,x2,val] of slots){
+    const vals=[c.total,c.ok,c.service,c.bad];
+    for(let i=0;i<slots.length;i++){
+      const [x1,x2]=slots[i];
       ctx.fillStyle='rgb(237,237,237)';
-      ctx.fillRect(px(x1-0.8),px(lineY-10.2),px((x2-x1)+1.6),px(12.4));
-      drawBitmapText(ctx,assets,String(val),px((x1+x2)/2),px(lineY-0.6),9,{align:'center'});
+      ctx.fillRect(x1-5,y1+18,(x2-x1)+10,(y2-y1)-36);
+      drawTextBox(ctx,assets,String(vals[i]),{x:x1-5,y:y1+12,w:(x2-x1)+10,h:(y2-y1)-24},{align:'center',sizes:[9]});
     }
   }
 
-  function overlayGatePage(ctx,assets,g){
-    const x=[141,603,1063,1524,1984,2445,2905,3365];
-    const y=[349,438,527,617,706,796,886,975,1065,1154,1244,1333,1423,1513,1602,1692,1781,1871,1961,2050,2140];
-    drawGateRows(ctx,assets,g,x,y);
-    drawGateSummary(ctx,assets,g,528.8);
+  function overlayGatePage(ctx,assets,g,pageNo){
+    if(g===1){
+      const x=[197,315,817,1277,1655,2115,2493,3309];
+      const y=[696,791,885,979,1073,1167,1261,1356,1450,1544,1638];
+      drawGateRows(ctx,assets,g,x,y);
+      drawGateSummaryPx(ctx,assets,g,[[1017,1116],[1319,1418],[1817,1917],[2153,2252]],1638,1735);
+      return;
+    }
+    const coords={
+      2:{x:[197,314,820,1279,1657,2117,2495,3310],slots:[[1021,1120],[1322,1422],[1821,1921],[2157,2256]]},
+      3:{x:[199,318,820,1263,1647,2119,2474,3307],slots:[[1020,1120],[1322,1422],[1821,1920],[2157,2256]]},
+      4:{x:[206,318,820,1263,1647,2119,2474,3300],slots:[[1020,1120],[1322,1422],[1821,1920],[2157,2256]]}
+    };
+    const y=[348,438,527,617,706,796,886,975,1065,1154,1244,1333,1423,1513,1602,1692,1781,1871,1961,2050,2140];
+    const c=coords[g];
+    drawGateRows(ctx,assets,g,c.x,y);
+    drawGateSummaryPx(ctx,assets,g,c.slots,2140,2236);
   }
 
-  function overlayPage5(ctx,assets){
-    const cols=[141,787,1432,2077,2722,3367]; const rows=[309,388,467,547,626];
+  function overlayConclusionPage(ctx,assets){
+    const cols=[513,1044,1457,1871,2521,2993];
+    const rows=[308,387,466,546,625];
     for(let g=1;g<=4;g++){
-      const c=gateCounts(g), vals=[c.ok,c.service,c.bad], top=rows[g-1], bottom=rows[g];
-      for(let j=0;j<3;j++) drawTextBox(ctx,assets,String(vals[j]),{x:cols[j+2],y:top,w:cols[j+3]-cols[j+2],h:bottom-top},{align:'center',sizes:[10]});
+      const c=gateCounts(g);
+      const vals=[c.ok,c.service,c.bad];
+      const top=rows[g-1], bottom=rows[g];
+      for(let j=0;j<3;j++){
+        drawTextBox(ctx,assets,String(vals[j]),{
+          x:cols[j+2]+3,y:top+3,w:cols[j+3]-cols[j+2]-6,h:bottom-top-6
+        },{align:'center',sizes:[10]});
+      }
     }
-    // multi-line conclusion fields follow the exact lines of the template
-    drawTextLinesOnTemplate(ctx,assets,state.conclusion.generalCondition,[{x1:244,x2:641.2,y:166.6},{x1:34.1,x2:529.1,y:180.1},{x1:34.1,x2:529.1,y:191.4}],10);
-    drawTextLinesOnTemplate(ctx,assets,state.conclusion.faults,[{x1:34.1,x2:529.1,y:220.3},{x1:34.1,x2:529.1,y:231.7},{x1:34.1,x2:529.1,y:243.0},{x1:34.1,x2:529.1,y:254.4}],9.5);
-    drawTextLinesOnTemplate(ctx,assets,state.conclusion.recommendations,[{x1:34.1,x2:529.1,y:283.3},{x1:34.1,x2:529.1,y:294.7},{x1:34.1,x2:529.1,y:306.0}],9.5);
-    drawLineValue(ctx,assets,state.conclusion.deadline,236,359.6,323.2,10);
-    const signY=[358.5,383.9,409.3];
-    for(let i=0;i<3;i++){
-      drawLineValue(ctx,assets,state.conclusion.signers[i].person,100.1,226.1,signY[i],9,'center');
-      drawLineValue(ctx,assets,formatShortDate(state.conclusion.signers[i].date),616,742,signY[i],9,'center');
-    }
-  }
-
-  function drawTextLinesOnTemplate(ctx,assets,text,lineDefs,fontPt){
-    if(!String(text||'').trim()) return;
-    const maxWidth=Math.max(...lineDefs.map(l=>px(l.x2-l.x1)));
-    let size=fontPt, lines=wrapBitmap(assets.meta,text,size,maxWidth);
-    while(lines.length>lineDefs.length && size>7){ size-=.5; lines=wrapBitmap(assets.meta,text,size,maxWidth); }
-    if(lines.length>lineDefs.length){ lines=lines.slice(0,lineDefs.length); lines[lines.length-1]=lines[lines.length-1].replace(/…?$/,'…'); }
-    lines.forEach((line,i)=>{ const d=lineDefs[i]; if(!d)return; let t=line; while(t && measureBitmap(assets.meta,t,size)>px(d.x2-d.x1)) t=t.slice(0,-1); drawBitmapText(ctx,assets,t,px(d.x1),px(d.y-1.4),size); });
   }
 
   async function renderPages() {
-    const assets=await getRenderAssets(); const outputs=[];
-    for(let p=1;p<=5;p++){
-      const canvas=document.createElement('canvas'); canvas.width=PAGE_W; canvas.height=PAGE_H; const ctx=canvas.getContext('2d',{alpha:false});
-      ctx.fillStyle='#fff'; ctx.fillRect(0,0,PAGE_W,PAGE_H); ctx.drawImage(assets.pages[p-1],0,0);
-      if(p===1) overlayPage1(ctx,assets); else if(p>=2&&p<=4) overlayGatePage(ctx,assets,p); else overlayPage5(ctx,assets);
-      const blob=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Не удалось сформировать страницу PDF')),'image/jpeg',1));
-      outputs.push({blob, width:PAGE_W, height:PAGE_H});
+    const assets=await getRenderAssets();
+    const outputs=[];
+    for(let p=1;p<=6;p++){
+      const canvas=document.createElement('canvas');
+      canvas.width=PAGE_W; canvas.height=PAGE_H;
+      const ctx=canvas.getContext('2d',{alpha:false});
+      ctx.fillStyle='#fff'; ctx.fillRect(0,0,PAGE_W,PAGE_H);
+      ctx.drawImage(assets.pages[p-1],0,0);
+      if(p===2) overlayGatePage(ctx,assets,1,p);
+      else if(p===3) overlayGatePage(ctx,assets,2,p);
+      else if(p===4) overlayGatePage(ctx,assets,3,p);
+      else if(p===5) overlayGatePage(ctx,assets,4,p);
+      else if(p===6) overlayConclusionPage(ctx,assets);
+      const blob=await new Promise((resolve,reject)=>canvas.toBlob(
+        b=>b?resolve(b):reject(new Error('Не удалось сформировать страницу PDF')),
+        'image/jpeg',1
+      ));
+      outputs.push({blob,width:PAGE_W,height:PAGE_H});
       await new Promise(r=>setTimeout(r,0));
     }
     return outputs;
