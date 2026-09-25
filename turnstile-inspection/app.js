@@ -168,28 +168,35 @@
     return SECTIONS.findIndex(section => section.id === id);
   }
 
-  function animateView(className) {
-    return new Promise(resolve => {
-      els.view.classList.remove('view-enter-forward','view-enter-back','view-leave-forward','view-leave-back');
-      const done = () => {
-        els.view.classList.remove(className);
-        resolve();
-      };
-      els.view.addEventListener('animationend', done, { once: true });
-      requestAnimationFrame(() => els.view.classList.add(className));
-      setTimeout(done, 360);
+  let sectionAnimation = null;
+
+  function animateSection(direction) {
+    if (!els.view?.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    sectionAnimation?.cancel();
+    const offset = direction === 'forward' ? 14 : -14;
+    sectionAnimation = els.view.animate([
+      { opacity: 0.46, transform: `translate3d(${offset}px, 0, 0) scale(.997)` },
+      { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' }
+    ], {
+      duration: 380,
+      easing: 'cubic-bezier(.16, 1, .3, 1)',
+      fill: 'both'
     });
+    sectionAnimation.finished.finally(() => {
+      els.view.style.opacity = '';
+      els.view.style.transform = '';
+      sectionAnimation = null;
+    }).catch(() => {});
   }
 
-  async function switchSection(id) {
+  function switchSection(id) {
     if (!id || id === activeSection) return;
     const direction = sectionIndex(id) >= sectionIndex(activeSection) ? 'forward' : 'back';
-    await animateView(direction === 'forward' ? 'view-leave-forward' : 'view-leave-back');
     activeSection = id;
     localStorage.setItem('turnstileInspection.activeSection', id);
     render();
-    window.scrollTo({top:0,behavior:'smooth'});
-    animateView(direction === 'forward' ? 'view-enter-forward' : 'view-enter-back');
+    window.scrollTo({ top: 0, behavior: 'auto' });
+    requestAnimationFrame(() => animateSection(direction));
   }
 
   function render() {
