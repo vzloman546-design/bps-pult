@@ -668,7 +668,9 @@
   }
 
   // ---------- Install / offline ----------
-  if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(console.error));
+  if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(reg=>reg.update()).catch(console.error));
+  const isIOSInstall = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.navigator.standalone;
+  if (isIOSInstall) els.installBtn?.classList.remove('hidden');
   window.addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); deferredInstallPrompt=e; els.installBtn.classList.remove('hidden'); });
   els.installBtn.addEventListener('click',async()=>{
     if(deferredInstallPrompt){ deferredInstallPrompt.prompt(); await deferredInstallPrompt.userChoice; deferredInstallPrompt=null; els.installBtn.classList.add('hidden'); }
