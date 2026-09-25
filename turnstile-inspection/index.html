@@ -13,13 +13,15 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="appbar">
-    <div class="appbar-main">
-      <div><h1>Осмотр турникетов</h1></div>
-      <button id="installBtn" class="icon-button hidden" type="button" aria-label="Установить приложение">Установить</button>
-    </div>
-  </header>
-  <nav id="tabs" class="tabs" aria-label="Разделы акта"></nav>
+  <div class="top-shell">
+    <header class="appbar">
+      <div class="appbar-main">
+        <div><h1>Осмотр турникетов</h1></div>
+        <button id="installBtn" class="icon-button hidden" type="button" aria-label="Установить приложение">Установить</button>
+      </div>
+    </header>
+    <nav id="tabs" class="tabs" aria-label="Разделы акта"></nav>
+  </div>
   <main id="view" class="view"></main>
   <footer class="bottom-bar">
     <button id="prevBtn" class="btn secondary" type="button">Назад</button>
