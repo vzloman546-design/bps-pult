@@ -56,11 +56,11 @@
     `;
   }
 
-  function statusSelect(id, value, label) {
+  function statusSelect(id, value, label, disabled = false) {
     return `
       <div class="field">
         <label for="${id}">${ui.escapeHtml(label)}</label>
-        <select id="${id}" class="select">
+        <select id="${id}" class="select" ${disabled ? 'disabled' : ''}>
           ${STATUS_OPTIONS.map(option =>
             `<option value="${ui.escapeHtml(option)}" ${option === value ? 'selected' : ''}>
               ${ui.escapeHtml(option || 'Не выбрано')}
@@ -350,6 +350,7 @@
       <div class="team-gate-screen">
         <section class="team-card gate-header-card">
           <h2>${gate.gateNo} гейт</h2>
+          ${gate.readOnly ? '<div class="team-status-row" style="justify-content:center"><span class="team-chip brand">Только просмотр</span></div>' : ''}
           <div class="gate-summary">
             <div class="metric"><strong>${completed}</strong><span>заполнено</span></div>
             <div class="metric"><strong>${ok}</strong><span>исправно</span></div>
@@ -373,22 +374,24 @@
                 </summary>
                 <div class="turn-body">
                   <div class="form-grid">
-                    ${statusSelect('visual-' + index, check.visual, 'Внешний и механический осмотр')}
-                    ${statusSelect('power-' + index, check.power, 'Питание и индикация')}
-                    ${statusSelect('reader-' + index, check.reader, 'Считыватель / контроль прохода')}
-                    ${statusSelect('status-' + index, check.status, 'Итоговое состояние')}
+                    ${statusSelect('visual-' + index, check.visual, 'Внешний и механический осмотр', gate.readOnly)}
+                    ${statusSelect('power-' + index, check.power, 'Питание и индикация', gate.readOnly)}
+                    ${statusSelect('reader-' + index, check.reader, 'Считыватель / контроль прохода', gate.readOnly)}
+                    ${statusSelect('status-' + index, check.status, 'Итоговое состояние', gate.readOnly)}
                     <div class="field full">
                       <label for="remarks-${index}">Замечания / необходимые работы</label>
-                      <textarea id="remarks-${index}" class="textarea" placeholder="Обязательно при неисправности или обслуживании">${ui.escapeHtml(check.remarks || '')}</textarea>
+                      <textarea id="remarks-${index}" class="textarea" placeholder="Обязательно при неисправности или обслуживании" ${gate.readOnly ? 'disabled' : ''}>${ui.escapeHtml(check.remarks || '')}</textarea>
                       <div id="remark-note-${index}" class="team-required-note ${(['Требует обслуживания','Неисправно'].includes(check.status) && !check.remarks) ? '' : 'hidden'}">
                         Для этого статуса нужно указать замечание.
                       </div>
                     </div>
                   </div>
-                  <div class="turn-actions">
-                    <button class="btn success small" type="button" data-all-ok="${index}">Исправен</button>
-                    <button class="btn secondary small" type="button" data-clear-check="${index}">Очистить</button>
-                  </div>
+                  ${gate.readOnly ? '' : `
+                    <div class="turn-actions">
+                      <button class="btn success small" type="button" data-all-ok="${index}">Исправен</button>
+                      <button class="btn secondary small" type="button" data-clear-check="${index}">Очистить</button>
+                    </div>
+                  `}
                 </div>
               </details>
             `).join('')}
@@ -404,6 +407,7 @@
     };
 
     async function save(index, patch) {
+      if (gate.readOnly) return;
       Object.assign(checks[index], patch);
       updateSync();
 
@@ -688,7 +692,7 @@
                   ${ui.statusLabel(gate.status)}
                 </div>
                 ${ui.progressBar(gate.completed, gate.total)}
-                ${state.user.role === 'admin' && inspection.status === 'active' ? `
+                ${state.user.role === 'admin' && inspection.status === 'active' && gate.status !== 'completed' ? `
                   <div class="field" style="margin-top:9px">
                     <label>Исполнитель</label>
                     <select class="select" data-reassign-gate="${gate.gateNo}">
@@ -701,7 +705,12 @@
                   </div>
                 ` : ''}
               </div>
-              <button class="btn secondary small" type="button" data-admin-open-gate="${gate.gateNo}">Открыть</button>
+              <div class="team-actions" style="justify-content:flex-end">
+                <button class="btn secondary small" type="button" data-admin-open-gate="${gate.gateNo}">Открыть</button>
+                ${state.user.role === 'admin' && inspection.status === 'completed' && gate.status === 'completed'
+                  ? `<button class="btn warning small" type="button" data-reopen-gate="${gate.gateNo}">Переоткрыть</button>`
+                  : ''}
+              </div>
             </div>
           `).join('')}
         </div>
@@ -730,6 +739,25 @@
         inspectionId: inspection.id,
         gateNo: Number(button.dataset.adminOpenGate)
       });
+    });
+
+    els.app.querySelectorAll('[data-reopen-gate]').forEach(button => {
+      button.onclick = async () => {
+        const gateNo = Number(button.dataset.reopenGate);
+        const confirmed = await ui.confirmAction(
+          'Переоткрыть ' + gateNo + ' гейт?',
+          'Гейт снова станет рабочим заданием. После исправления будет сформирована новая версия PDF.'
+        );
+        if (!confirmed) return;
+
+        try {
+          await api.reopenGate(inspection.id, gateNo);
+          ui.toast('Гейт возвращён в работу.');
+          renderInspection().catch(handleError);
+        } catch (error) {
+          handleError(error);
+        }
+      };
     });
 
     els.app.querySelectorAll('[data-reassign-gate]').forEach(select => {
