@@ -2,6 +2,7 @@ import { HttpError, json, readJson } from './http.js';
 import { requireAdmin } from './auth.js';
 import {
   canAccessInspection,
+  cancelInspection,
   createInspection,
   getGate,
   getInspectionSummary,
@@ -27,6 +28,12 @@ export async function handleInspectionRoutes(request, env, parts, user) {
 
   if (parts.length === 3 && request.method === 'GET') {
     return json({ inspection: await getInspectionSummary(env, inspectionId, user) });
+  }
+
+  if (parts[3] === 'cancel' && request.method === 'PATCH') {
+    requireAdmin(user);
+    await cancelInspection(env, inspectionId, user);
+    return json({ ok: true });
   }
 
   if (parts[3] === 'gates' && parts[4]) {
