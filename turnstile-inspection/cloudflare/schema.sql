@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS turnstile_checks (
   reader TEXT NOT NULL DEFAULT '',
   final_status TEXT NOT NULL DEFAULT '',
   remarks TEXT NOT NULL DEFAULT '',
-  last_updated_by TEXT NOT NULL,
+  last_updated_by TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (inspection_gate_id, turnstile_code),
   FOREIGN KEY (inspection_gate_id) REFERENCES inspection_gates(id) ON DELETE CASCADE,
@@ -133,3 +133,20 @@ CREATE TABLE IF NOT EXISTS documents (
   FOREIGN KEY (generated_by_user_id) REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_documents_inspection ON documents(inspection_id, version DESC);
+
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  inspection_id INTEGER,
+  gate_no INTEGER,
+  read_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (inspection_id) REFERENCES inspections(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_user
+  ON notifications(user_id, read_at, created_at DESC);
