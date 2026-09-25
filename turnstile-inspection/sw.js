@@ -1,5 +1,5 @@
-const CACHE = 'turnstile-inspection-v8';
-const ASSETS = ["./","./index.html","./styles.css?v=8","./app.js?v=8","./manifest.webmanifest","./icon.png","./assets-init.js","./asset-page1-1.js","./asset-page2-1.js","./asset-page2-2.js","./asset-page3-1.js","./asset-page3-2.js","./asset-page4-1.js","./asset-page4-2.js","./asset-page5-1.js","./asset-page5-2.js","./asset-page6-1.js","./asset-atlas-1.js","./asset-atlas-2.js","./asset-atlas-3.js","./assets-meta.js","./assets-final.js"];
+const CACHE = 'turnstile-inspection-v9';
+const ASSETS = ["./","./index.html","./styles.css?v=9","./app.js?v=9","./manifest.webmanifest","./icon-192.png","./apple-touch-icon.png","./assets-init.js","./asset-page1-1.js","./asset-page2-1.js","./asset-page2-2.js","./asset-page3-1.js","./asset-page3-2.js","./asset-page4-1.js","./asset-page4-2.js","./asset-page5-1.js","./asset-page5-2.js","./asset-page6-1.js","./asset-atlas-1.js","./asset-atlas-2.js","./asset-atlas-3.js","./assets-meta.js","./assets-final.js"];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
