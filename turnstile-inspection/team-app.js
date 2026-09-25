@@ -111,7 +111,15 @@
       state.user = await api.me();
       await api.flushQueue();
       await refreshBell();
-      route('home');
+      recoverPendingDocuments().catch(() => {});
+
+      const requestedInspection = Number(new URLSearchParams(location.search).get('inspection'));
+      if (Number.isInteger(requestedInspection) && requestedInspection > 0) {
+        history.replaceState(null, '', location.pathname);
+        route('inspection', { inspectionId: requestedInspection });
+      } else {
+        route('home');
+      }
     } catch {
       showLogin();
     }
@@ -647,6 +655,26 @@
     }
   }
 
+  async function recoverPendingDocuments() {
+    if (!state.user || !navigator.onLine || state.generating.size) return;
+
+    const inspections = await api.inspections();
+    const completed = inspections
+      .filter(item => item.status === 'completed')
+      .slice(0, 12);
+
+    for (const item of completed) {
+      try {
+        const documentInfo = await api.document(item.id);
+        if (documentInfo?.status === 'pending') {
+          await ensureDocumentGenerated(item.id);
+        }
+      } catch {
+        // Другой клиент мог уже сформировать документ — это нормальная гонка.
+      }
+    }
+  }
+
   async function renderInspection() {
     setChrome({
       back: true,
@@ -1047,6 +1075,12 @@
 
   window.addEventListener('turnstile:session-expired', showLogin);
 
+  window.addEventListener('turnstile:queue-flushed', event => {
+    if (event.detail?.sent) {
+      recoverPendingDocuments().catch(() => {});
+    }
+  });
+
   window.addEventListener('turnstile:queue-changed', () => {
     const gateSync = document.getElementById('gateSync');
     const profileSync = document.getElementById('profileSync');
@@ -1058,8 +1092,15 @@
 
   window.addEventListener('online', () => {
     api.flushQueue()
-      .then(result => {
+      .then(async result => {
         if (result.sent) ui.toast('Отложенные изменения синхронизированы.');
+        await recoverPendingDocuments().catch(() => {});
+
+        if (state.route.name === 'gate') {
+          renderGate().catch(() => {});
+        } else if (state.route.name === 'inspection') {
+          renderInspection().catch(() => {});
+        }
       })
       .catch(() => {});
   });
