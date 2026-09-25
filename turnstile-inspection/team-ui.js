@@ -106,7 +106,10 @@
       assignee_required:'Для выбранного гейта укажи сотрудника',
       invalid_assignee:'Выбранный сотрудник недоступен',
       document_not_ready:'Акт ещё формируется',
-      inspection_not_completed:'Осмотр ещё не завершён'
+      inspection_not_completed:'Осмотр ещё не завершён',
+      inspection_not_active:'Завершённый осмотр доступен только для просмотра',
+      gate_already_completed:'Завершённый гейт сначала нужно переоткрыть',
+      push_not_configured:'Push-уведомления ещё не настроены'
     };
     return map[code] || 'Не удалось выполнить операцию';
   }
