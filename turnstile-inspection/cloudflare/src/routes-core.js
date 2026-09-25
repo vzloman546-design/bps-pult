@@ -77,6 +77,29 @@ export async function handleUserRoutes(request, env, parts, user) {
     if (!target) throw new HttpError(404, 'user_not_found');
 
     const input = await readJson(request);
+
+    if (target.id === user.id && input.active === false) {
+      throw new HttpError(409, 'cannot_disable_self');
+    }
+
+    if (target.id === user.id && input.role != null && input.role !== 'admin') {
+      throw new HttpError(409, 'cannot_demote_self');
+    }
+
+    if (input.active === false) {
+      const activeAssignment = await env.DB.prepare(
+        `SELECT 1 AS ok
+         FROM inspection_gates g
+         JOIN inspections i ON i.id=g.inspection_id
+         WHERE g.assignee_user_id=? AND i.status='active'
+         LIMIT 1`
+      ).bind(target.id).first();
+
+      if (activeAssignment?.ok) {
+        throw new HttpError(409, 'user_has_active_assignments');
+      }
+    }
+
     const displayName = input.displayName == null
       ? target.display_name
       : String(input.displayName).trim();
