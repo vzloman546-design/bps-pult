@@ -82,7 +82,9 @@
       }
 
       storage.setQueue(remaining);
-      return { sent, remaining: remaining.length };
+      const result = { sent, remaining: remaining.length };
+      window.dispatchEvent(new CustomEvent('turnstile:queue-flushed', { detail: result }));
+      return result;
     } finally {
       flushing = false;
     }
@@ -203,6 +205,13 @@
       return request(
         '/api/inspections/' + inspectionId + '/gates/' + gateNo + '/assign',
         { method: 'PATCH', json: { assigneeUserId } }
+      );
+    },
+
+    reopenGate(inspectionId, gateNo) {
+      return request(
+        '/api/inspections/' + inspectionId + '/gates/' + gateNo + '/reopen',
+        { method: 'PATCH', json: {} }
       );
     },
 
