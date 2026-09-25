@@ -1,9 +1,20 @@
+import { sendPushToUser } from './push.js';
+
 export async function notifyUser(env, userId, type, title, body, inspectionId = null, gateNo = null) {
   await env.DB.prepare(
     `INSERT INTO notifications
       (user_id,type,title,body,inspection_id,gate_no)
      VALUES (?,?,?,?,?,?)`
   ).bind(userId, type, title, body, inspectionId, gateNo).run();
+
+  await sendPushToUser(env, userId, {
+    title,
+    body,
+    type,
+    inspectionId,
+    gateNo,
+    url: inspectionId ? `./team.html?inspection=${inspectionId}` : './team.html'
+  }).catch(error => console.error('push_notification_failed', error));
 }
 
 export async function notifyAdmins(env, type, title, body, inspectionId = null, gateNo = null) {
