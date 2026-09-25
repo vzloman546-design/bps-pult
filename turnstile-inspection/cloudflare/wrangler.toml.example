@@ -1,0 +1,30 @@
+name = "turnstile-inspection-api"
+main = "src/worker.js"
+compatibility_date = "2026-09-26"
+
+[vars]
+# Replace after Cloudflare Pages project is created.
+ALLOWED_ORIGIN = "https://REPLACE.pages.dev"
+SESSION_TTL_DAYS = "30"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "turnstile-inspection"
+database_id = "REPLACE_D1_DATABASE_ID"
+
+[[kv_namespaces]]
+binding = "DOCUMENTS"
+id = "REPLACE_KV_NAMESPACE_ID"
+
+[[durable_objects.bindings]]
+name = "INSPECTION_ROOM"
+class_name = "InspectionRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["InspectionRoom"]
+
+# Secrets to create with wrangler secret put:
+# SESSION_PEPPER
+# VAPID_PRIVATE_KEY
+# VAPID_PUBLIC_KEY
