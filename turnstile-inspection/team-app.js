@@ -739,6 +739,11 @@
           </div>
         </div>
         ${ui.progressBar(progress.completed, progress.total)}
+        ${state.user.role === 'admin' && inspection.status === 'active' ? `
+          <div class="team-actions" style="margin-top:12px">
+            <button id="cancelInspectionBtn" class="btn danger" type="button">Отменить осмотр</button>
+          </div>
+        ` : ''}
       </section>
 
       <section class="team-card">
@@ -782,7 +787,9 @@
           <h3>Акт</h3>
           <div class="team-status-row">
             <span class="team-chip ${ui.statusClass(inspection.document.status)}">
-              ${inspection.document.status === 'ready' ? 'PDF готов' : 'Формируется'}
+              ${inspection.document.status === 'ready'
+                ? (inspection.status === 'active' ? 'Предыдущая версия PDF' : 'PDF готов')
+                : 'Формируется'}
             </span>
             <span class="team-muted">Версия ${inspection.document.version}</span>
           </div>
@@ -794,6 +801,27 @@
         </section>
       ` : ''}
     `;
+
+    const cancelButton = document.getElementById('cancelInspectionBtn');
+    if (cancelButton) {
+      cancelButton.onclick = async () => {
+        const confirmed = await ui.confirmAction(
+          'Отменить осмотр?',
+          'Заполненные данные останутся в истории, но задания будут сняты и акт формироваться не будет.'
+        );
+        if (!confirmed) return;
+
+        cancelButton.disabled = true;
+        try {
+          await api.cancelInspection(inspection.id);
+          ui.toast('Осмотр отменён.');
+          route('home');
+        } catch (error) {
+          handleError(error);
+          cancelButton.disabled = false;
+        }
+      };
+    }
 
     els.app.querySelectorAll('[data-admin-open-gate]').forEach(button => {
       button.onclick = () => route('gate', {
