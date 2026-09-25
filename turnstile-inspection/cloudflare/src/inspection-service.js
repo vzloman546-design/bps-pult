@@ -233,6 +233,53 @@ export async function createInspection(env, user, input) {
   return getInspectionSummary(env, inspectionId, user);
 }
 
+export async function cancelInspection(env, inspectionId, actor) {
+  const inspection = await env.DB.prepare(
+    `SELECT * FROM inspections WHERE id=?`
+  ).bind(inspectionId).first();
+
+  if (!inspection) throw new HttpError(404, 'inspection_not_found');
+  if (!['active','draft'].includes(inspection.status)) {
+    throw new HttpError(409, 'inspection_not_cancellable');
+  }
+
+  const assignees = (await env.DB.prepare(
+    `SELECT DISTINCT assignee_user_id
+     FROM inspection_gates
+     WHERE inspection_id=? AND assignee_user_id IS NOT NULL`
+  ).bind(inspectionId).all()).results || [];
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE inspections
+       SET status='cancelled',completed_at=NULL,updated_at=datetime('now')
+       WHERE id=?`
+    ).bind(inspectionId),
+    env.DB.prepare(
+      `INSERT INTO inspection_events
+        (inspection_id,actor_user_id,event_type,payload_json)
+       VALUES (?,?,?,?)`
+    ).bind(inspectionId, actor.id, 'inspection_cancelled', '{}')
+  ]);
+
+  for (const row of assignees) {
+    await notifyUser(
+      env,
+      row.assignee_user_id,
+      'inspection_cancelled',
+      'Осмотр отменён',
+      inspection.title ? `Осмотр «${inspection.title}» отменён администратором.` : 'Осмотр отменён администратором.',
+      inspectionId,
+      null
+    );
+  }
+
+  await broadcastInspection(env, inspectionId, {
+    type: 'inspection_cancelled',
+    inspectionId
+  });
+}
+
 export async function getGate(env, inspectionId, gateNo, user) {
   if (!validGateNo(gateNo)) throw new HttpError(404, 'gate_not_found');
 
