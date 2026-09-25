@@ -44,6 +44,21 @@
     return type.includes('application/json') ? response.json() : response;
   }
 
+  async function cachedValue(key, loader, fallback = null) {
+    try {
+      const value = await loader();
+      storage.setCache(key, value);
+      return value;
+    } catch (error) {
+      const cached = storage.getCache(key, undefined);
+      if (cached !== undefined && (!error.status || error.status >= 500 || !navigator.onLine)) {
+        return cached;
+      }
+      if (fallback !== null && (!error.status || !navigator.onLine)) return fallback;
+      throw error;
+    }
+  }
+
   async function sendCheck(entry) {
     return request(
       '/api/inspections/' + entry.inspectionId +
@@ -66,9 +81,16 @@
     try {
       const source = storage.getQueue();
       const remaining = [];
+      const currentUserId = storage.getSession()?.user?.id || '';
 
       for (let i = 0; i < source.length; i++) {
         const entry = source[i];
+
+        if (entry.userId && entry.userId !== currentUserId) {
+          remaining.push(entry);
+          continue;
+        }
+
         try {
           if (entry.type === 'check') await sendCheck(entry);
           sent++;
@@ -132,7 +154,7 @@
 
   const TeamApi = {
     get session() { return storage.getSession(); },
-    get queueCount() { return storage.getQueue().length; },
+    get queueCount() { return storage.getCurrentQueue().length; },
 
     health() {
       return request('/api/health');
@@ -159,14 +181,20 @@
     },
 
     async me() {
-      const result = await request('/api/me');
       const current = storage.getSession();
-      if (current) storage.setSession({ ...current, user: result.user });
-      return result.user;
+
+      try {
+        const result = await request('/api/me');
+        if (current) storage.setSession({ ...current, user: result.user });
+        return result.user;
+      } catch (error) {
+        if (current?.user && (!error.status || !navigator.onLine)) return current.user;
+        throw error;
+      }
     },
 
     async users() {
-      return (await request('/api/users')).users || [];
+      return cachedValue('users', async () => (await request('/api/users')).users || [], []);
     },
 
     async createUser(input) {
@@ -181,11 +209,18 @@
     },
 
     async inspections() {
-      return (await request('/api/inspections')).inspections || [];
+      return cachedValue(
+        'inspections',
+        async () => (await request('/api/inspections')).inspections || [],
+        []
+      );
     },
 
     async inspection(id) {
-      return (await request('/api/inspections/' + id)).inspection;
+      return cachedValue(
+        'inspection:' + id,
+        async () => (await request('/api/inspections/' + id)).inspection
+      );
     },
 
     cancelInspection(id) {
@@ -196,16 +231,24 @@
     },
 
     async createInspection(input) {
-      return (await request('/api/inspections', {
+      const inspection = (await request('/api/inspections', {
         method: 'POST',
         json: input
       })).inspection;
+      storage.setCache('inspection:' + inspection.id, inspection);
+      storage.removeCache('inspections');
+      return inspection;
     },
 
     async gate(inspectionId, gateNo) {
-      return (await request(
-        '/api/inspections/' + inspectionId + '/gates/' + gateNo
-      )).gate;
+      const key = 'gate:' + inspectionId + ':' + gateNo;
+      const gate = await cachedValue(
+        key,
+        async () => (await request(
+          '/api/inspections/' + inspectionId + '/gates/' + gateNo
+        )).gate
+      );
+      return storage.applyPendingMutations(gate);
     },
 
     assign(inspectionId, gateNo, assigneeUserId) {
@@ -224,6 +267,7 @@
 
     async updateCheck(inspectionId, gateNo, code, patch) {
       const entry = { type: 'check', inspectionId, gateNo, code, patch };
+      storage.patchCachedGate(entry);
 
       if (!navigator.onLine) {
         storage.upsertCheckMutation(entry);
@@ -242,11 +286,19 @@
     },
 
     async history() {
-      return (await request('/api/history')).history || [];
+      return cachedValue(
+        'history',
+        async () => (await request('/api/history')).history || [],
+        []
+      );
     },
 
     async notifications() {
-      return (await request('/api/notifications')).notifications || [];
+      return cachedValue(
+        'notifications',
+        async () => (await request('/api/notifications')).notifications || [],
+        []
+      );
     },
 
     markNotificationRead(id) {
