@@ -25,8 +25,16 @@
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   }
 
+  function currentUserId() {
+    return readJson(SESSION_KEY, null)?.user?.id || '';
+  }
+
+  function scopedCacheKey(key) {
+    return (currentUserId() || 'anonymous') + ':' + key;
+  }
+
   function mergeCheckIntoCachedGate(cache, item) {
-    const key = 'gate:' + item.inspectionId + ':' + item.gateNo;
+    const key = scopedCacheKey('gate:' + item.inspectionId + ':' + item.gateNo);
     const record = cache[key];
     if (!record?.value?.checks) return;
 
@@ -61,13 +69,13 @@
     },
 
     getCache(key, fallback = null) {
-      const record = cacheMap()[key];
+      const record = cacheMap()[scopedCacheKey(key)];
       return record ? record.value : fallback;
     },
 
     setCache(key, value) {
       const cache = cacheMap();
-      cache[key] = {
+      cache[scopedCacheKey(key)] = {
         value,
         cachedAt: Date.now()
       };
@@ -77,19 +85,32 @@
 
     removeCache(key) {
       const cache = cacheMap();
-      delete cache[key];
+      delete cache[scopedCacheKey(key)];
       writeJson(CACHE_KEY, cache);
     },
 
     clearUserCache() {
-      writeJson(CACHE_KEY, {});
-      this.setQueue([]);
+      const userId = currentUserId();
+      if (!userId) return;
+      const cache = cacheMap();
+      for (const key of Object.keys(cache)) {
+        if (key.startsWith(userId + ':')) delete cache[key];
+      }
+      writeJson(CACHE_KEY, cache);
+      this.setQueue(this.getQueue().filter(entry => entry.userId !== userId));
+    },
+
+    getCurrentQueue() {
+      const userId = currentUserId();
+      return this.getQueue().filter(entry => entry.userId === userId);
     },
 
     applyPendingMutations(gate) {
       if (!gate?.checks) return gate;
       const copy = JSON.parse(JSON.stringify(gate));
+      const userId = currentUserId();
       const queue = this.getQueue().filter(entry =>
+        entry.userId === userId &&
         entry.type === 'check' &&
         entry.inspectionId === copy.inspectionId &&
         entry.gateNo === copy.gateNo
@@ -105,7 +126,9 @@
 
     upsertCheckMutation(item) {
       const queue = this.getQueue();
+      const userId = currentUserId();
       const index = queue.findIndex(entry =>
+        entry.userId === userId &&
         entry.type === 'check' &&
         entry.inspectionId === item.inspectionId &&
         entry.gateNo === item.gateNo &&
@@ -114,6 +137,7 @@
 
       const next = {
         ...item,
+        userId,
         id: index >= 0 ? queue[index].id : crypto.randomUUID(),
         queuedAt: Date.now()
       };
