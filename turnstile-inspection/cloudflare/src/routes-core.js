@@ -185,10 +185,21 @@ export async function handleHistoryRoute(request, env, user) {
   for (const inspection of rows) {
     const gates = (await env.DB.prepare(
       `SELECT DISTINCT gate_no
-       FROM inspection_events
-       WHERE inspection_id=? AND actor_user_id=? AND gate_no IS NOT NULL
+       FROM (
+         SELECT e.gate_no AS gate_no
+         FROM inspection_events e
+         WHERE e.inspection_id=? AND e.actor_user_id=? AND e.gate_no IS NOT NULL
+
+         UNION
+
+         SELECT g.gate_no AS gate_no
+         FROM inspection_gates g
+         JOIN assignment_history ah ON ah.inspection_gate_id=g.id
+         WHERE g.inspection_id=?
+           AND (ah.from_user_id=? OR ah.to_user_id=?)
+       )
        ORDER BY gate_no`
-    ).bind(inspection.id, user.id).all()).results || [];
+    ).bind(inspection.id, user.id, inspection.id, user.id, user.id).all()).results || [];
 
     history.push({
       id: inspection.id,
