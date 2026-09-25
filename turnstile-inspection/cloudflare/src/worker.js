@@ -59,11 +59,11 @@ async function handleApi(request, env) {
   }
 
   if (parts[1] === 'users') {
-    return handleUserRoutes(request, env, parts.slice(1), user);
+    return handleUserRoutes(request, env, parts, user);
   }
 
   if (parts[1] === 'inspections') {
-    return handleInspectionRoutes(request, env, parts.slice(1), user);
+    return handleInspectionRoutes(request, env, parts, user);
   }
 
   if (parts[1] === 'history') {
@@ -71,7 +71,7 @@ async function handleApi(request, env) {
   }
 
   if (parts[1] === 'notifications') {
-    return handleNotificationRoutes(request, env, parts.slice(1), user);
+    return handleNotificationRoutes(request, env, parts, user);
   }
 
   if (parts[1] === 'push') {
