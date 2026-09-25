@@ -28,7 +28,7 @@ h1 { margin: 1px 0 0; font-size: 22px; line-height: 1.2; }
 .save-dot.saving { background: var(--warn); }
 .icon-button { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--brand); padding: 9px 12px; font-size: 13px; font-weight: 700; }
 .hidden { display: none !important; }
-.tabs { position: sticky; top: 83px; z-index: 15; display: flex; gap: 7px; overflow-x: auto; padding: 9px 12px; background: rgba(243,246,249,.97); border-bottom: 1px solid var(--line); scrollbar-width: none; }
+.tabs { position: sticky; top: 61px; z-index: 15; display: flex; gap: 7px; overflow-x: auto; padding: 9px 12px; background: rgba(243,246,249,.97); border-bottom: 1px solid var(--line); scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
 .tab { white-space: nowrap; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 8px 12px; color: var(--muted); font-size: 13px; font-weight: 650; }
 .tab.active { color: white; border-color: var(--brand); background: var(--brand); }
@@ -111,3 +111,10 @@ h1 { margin: 1px 0 0; font-size: 22px; line-height: 1.2; }
   .row-number,.status-pill { background:#29333e; }
   .note { background:#18304a; color:#bddbfa; }
 }
+
+/* Turnstile inspection UI refinements */
+.gate-header-card > h2 { text-align: center; margin-bottom: 10px; }
+.center-card { text-align: center; }
+.center-card .quickbar { justify-content: center; }
+.center-card .export-card { text-align: center; }
+.center-card .note { text-align: center; }
