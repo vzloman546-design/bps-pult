@@ -72,7 +72,7 @@
 
   async function flushQueue() {
     if (flushing || !navigator.onLine) {
-      return { sent: 0, remaining: storage.getQueue().length };
+      return { sent: 0, remaining: storage.getCurrentQueue().length };
     }
 
     flushing = true;
