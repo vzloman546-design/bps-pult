@@ -441,3 +441,16 @@
 .team-install-banner .btn {
   flex: 0 0 auto;
 }
+
+
+.team-notification[role="button"] {
+  cursor: pointer;
+  border-radius: 10px;
+  transition: background .18s ease;
+}
+
+.team-notification[role="button"]:hover,
+.team-notification[role="button"]:focus-visible {
+  background: var(--surface-2);
+  outline: none;
+}
