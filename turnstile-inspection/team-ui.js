@@ -57,7 +57,8 @@
       cancelled:'Отменён',
       draft:'Черновик',
       ready:'Готов',
-      failed:'Ошибка'
+      failed:'Ошибка',
+      transferred:'Передан'
     })[status] || status || 'Не заполнено';
   }
 
