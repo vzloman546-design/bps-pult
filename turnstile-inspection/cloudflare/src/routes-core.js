@@ -9,6 +9,7 @@ import {
   safeUser
 } from './auth.js';
 import { listNotifications, markNotificationRead } from './notifications.js';
+import { vapidPublicKey } from './push.js';
 
 export async function handleAuthRoutes(request, env, parts) {
   if (parts[1] === 'login' && request.method === 'POST') {
@@ -298,7 +299,7 @@ export async function handleNotificationRoutes(request, env, parts, user) {
 
 export async function handlePushRoutes(request, env, parts, user) {
   if (parts[1] === 'public-key' && request.method === 'GET') {
-    return json({ publicKey: env.VAPID_PUBLIC_KEY || '' });
+    return json({ publicKey: vapidPublicKey(env) });
   }
 
   if (parts[1] === 'subscription' && request.method === 'POST') {
