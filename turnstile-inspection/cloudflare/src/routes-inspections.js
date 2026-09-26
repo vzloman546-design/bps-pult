@@ -96,9 +96,7 @@ export async function handleInspectionRoutes(request, env, parts, user) {
   }
 
   if (parts[3] === 'generation-snapshot' && request.method === 'GET') {
-    if (!(await canAccessInspection(env, user, inspectionId))) {
-      throw new HttpError(403, 'inspection_forbidden');
-    }
+    requireAdmin(user);
 
     const inspection = await env.DB.prepare(
       `SELECT * FROM inspections WHERE id=?`
@@ -154,9 +152,7 @@ export async function handleInspectionRoutes(request, env, parts, user) {
   }
 
   if (parts[3] === 'document' && parts.length === 4 && request.method === 'GET') {
-    if (!(await canAccessInspection(env, user, inspectionId))) {
-      throw new HttpError(403, 'inspection_forbidden');
-    }
+    requireAdmin(user);
 
     const document = await env.DB.prepare(
       `SELECT id,version,status,byte_size,ready_at
@@ -170,9 +166,7 @@ export async function handleInspectionRoutes(request, env, parts, user) {
   }
 
   if (parts[3] === 'document' && parts[4] === 'upload' && request.method === 'POST') {
-    if (!(await canAccessInspection(env, user, inspectionId))) {
-      throw new HttpError(403, 'inspection_forbidden');
-    }
+    requireAdmin(user);
 
     const document = await env.DB.prepare(
       `SELECT * FROM documents
@@ -241,9 +235,7 @@ export async function handleInspectionRoutes(request, env, parts, user) {
   }
 
   if (parts[3] === 'document' && parts[4] === 'file' && request.method === 'GET') {
-    if (!(await canAccessInspection(env, user, inspectionId))) {
-      throw new HttpError(403, 'inspection_forbidden');
-    }
+    requireAdmin(user);
 
     const document = await env.DB.prepare(
       `SELECT * FROM documents
