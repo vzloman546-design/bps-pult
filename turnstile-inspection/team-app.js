@@ -1141,7 +1141,14 @@
       <section class="team-card">
         <h2>Уведомления</h2>
         ${notifications.length ? notifications.map(item => `
-          <div class="team-notification ${item.read_at ? '' : 'unread'}" data-notification-id="${item.id}">
+          <div
+            class="team-notification ${item.read_at ? '' : 'unread'}"
+            data-notification-id="${item.id}"
+            data-inspection-id="${item.inspection_id || ''}"
+            data-gate-no="${item.gate_no || ''}"
+            role="${item.inspection_id ? 'button' : 'status'}"
+            tabindex="${item.inspection_id ? '0' : '-1'}"
+          >
             <div>${ui.escapeHtml(item.title)}</div>
             <div class="team-muted">${ui.escapeHtml(item.body)}</div>
             <div class="team-muted">${ui.formatDate(item.created_at, true)}</div>
@@ -1149,6 +1156,28 @@
         `).join('') : '<div class="team-empty"><strong>Новых уведомлений нет</strong></div>'}
       </section>
     `;
+
+    els.app.querySelectorAll('[data-notification-id]').forEach(item => {
+      const open = () => {
+        const inspectionId = Number(item.dataset.inspectionId);
+        const gateNo = Number(item.dataset.gateNo);
+        if (!Number.isInteger(inspectionId) || inspectionId <= 0) return;
+
+        if ([1,2,3,4].includes(gateNo)) {
+          route('gate', { inspectionId, gateNo, fromHome: true });
+        } else {
+          route('inspection', { inspectionId });
+        }
+      };
+
+      item.addEventListener('click', open);
+      item.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          open();
+        }
+      });
+    });
 
     await Promise.all(
       notifications
