@@ -230,24 +230,27 @@ export async function generatePendingDocument(env, inspectionId, version) {
     }
   });
 
-  await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE documents
-       SET status='ready',kv_key=?,sha256=?,byte_size=?,
-           generated_by_user_id=NULL,ready_at=datetime('now')
-       WHERE inspection_id=? AND version=?`
-    ).bind(key, sha256, bytes.byteLength, inspectionId, version),
+  const transition = await env.DB.prepare(
+    `UPDATE documents
+     SET status='ready',kv_key=?,sha256=?,byte_size=?,
+         generated_by_user_id=NULL,ready_at=datetime('now')
+     WHERE inspection_id=? AND version=? AND status='pending'`
+  ).bind(key, sha256, bytes.byteLength, inspectionId, version).run();
 
-    env.DB.prepare(
-      `INSERT INTO inspection_events
-        (inspection_id,event_type,payload_json)
-       VALUES (?,?,?)`
-    ).bind(
-      inspectionId,
-      'document_ready',
-      JSON.stringify({ version, byteSize: bytes.byteLength, generator: 'cloudflare-browser-run' })
-    )
-  ]);
+  if (!Number(transition.meta?.changes || 0)) {
+    await env.DOCUMENTS.delete(key).catch(() => {});
+    return { status: 'superseded' };
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO inspection_events
+      (inspection_id,event_type,payload_json)
+     VALUES (?,?,?)`
+  ).bind(
+    inspectionId,
+    'document_ready',
+    JSON.stringify({ version, byteSize: bytes.byteLength, generator: 'cloudflare-browser-run' })
+  ).run();
 
   await notifyAdmins(
     env,
