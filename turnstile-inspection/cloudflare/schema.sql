@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL CHECK (role IN ('admin','inspector')),
   password_hash TEXT NOT NULL,
   password_salt TEXT NOT NULL,
+  password_iterations INTEGER NOT NULL DEFAULT 50000,
   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -150,3 +151,14 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_user
   ON notifications(user_id, read_at, created_at DESC);
+
+
+CREATE TABLE IF NOT EXISTS auth_throttle (
+  throttle_key TEXT PRIMARY KEY,
+  failures INTEGER NOT NULL DEFAULT 0,
+  window_started_at TEXT NOT NULL,
+  blocked_until TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_auth_throttle_updated
+  ON auth_throttle(updated_at);
