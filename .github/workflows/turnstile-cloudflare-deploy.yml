@@ -42,4 +42,4 @@ jobs:
 
       - name: Deploy production
         run: bash turnstile-inspection/cloudflare/scripts/deploy-production.sh
-# trigger password sync
+# trigger ui update
