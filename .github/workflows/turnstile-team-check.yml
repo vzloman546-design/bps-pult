@@ -1,0 +1,115 @@
+name: Turnstile Team Check
+
+on:
+  push:
+    branches:
+      - feature/turnstile-team-workflow
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "turnstile-inspection/**"
+      - ".github/workflows/turnstile-team-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: turnstile-inspection
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check browser JavaScript syntax
+        run: |
+          node --check team-config.js
+          node --check team-storage.js
+          node --check team-api.js
+          node --check team-ui.js
+          node --check team-app.js
+          node --check pdf-renderer.js
+          node --check server-print.js
+          node --check sw.js
+
+      - name: Build Cloudflare Pages bundle
+        env:
+          TURNSTILE_API_BASE: https://turnstile-inspection-api.example.workers.dev
+        run: |
+          bash pages-build.sh
+          test -f pages-dist/index.html
+          test -f pages-dist/team-manifest.webmanifest
+          test -f pages-dist/sw.js
+          test -f pages-dist/server-print.js
+          test ! -e pages-dist/cloudflare
+          grep -q '"start_url": "./"' pages-dist/team-manifest.webmanifest
+
+      - name: Install Worker dependencies
+        working-directory: turnstile-inspection/cloudflare
+        run: npm install --no-audit --no-fund
+
+      - name: Validate one-time setup generator
+        working-directory: turnstile-inspection/cloudflare
+        run: |
+          node scripts/generate-setup.mjs > /tmp/turnstile-setup.json 2>/dev/null
+          node -e "const x=require('/tmp/turnstile-setup.json'); for (const k of ['BOOTSTRAP_TOKEN','VAPID_KEYPAIR_JWK']) if (!x[k]) process.exit(1)"
+
+      - name: Validate production user manifest
+        working-directory: turnstile-inspection/cloudflare
+        run: |
+          node --check scripts/provision-production-users.mjs
+          node -e "const fs=require('fs'); const x=JSON.parse(fs.readFileSync('scripts/users.production.json','utf8')); if (!Array.isArray(x.users) || x.users.length !== 5) process.exit(1); if (x.users.some(u => !u.displayName || !u.username || !u.passwordEnv || 'password' in u)) process.exit(1)"
+
+      - name: Check Worker JavaScript syntax
+        working-directory: turnstile-inspection/cloudflare
+        run: |
+          node --check src/http.js
+          node --check src/constants.js
+          node --check src/auth.js
+          node --check src/notifications.js
+          node --check src/push.js
+          node --check src/inspection-service.js
+          node --check src/routes-core.js
+          node --check src/routes-inspections.js
+          node --check src/document-generator.js
+          node --check src/worker.js
+
+      - name: Wrangler build check
+        working-directory: turnstile-inspection/cloudflare
+        run: npx wrangler deploy --dry-run --config wrangler.ci.toml
+
+      - name: Run local D1 integration flow
+        working-directory: turnstile-inspection/cloudflare
+        run: |
+          rm -rf .wrangler/state
+          npx wrangler d1 execute turnstile-inspection-test --local --config wrangler.test.toml --file=./schema.sql
+          npx wrangler dev --local --config wrangler.test.toml --port 8787 > /tmp/turnstile-wrangler.log 2>&1 &
+          WRANGLER_PID=$!
+          trap 'kill $WRANGLER_PID 2>/dev/null || true' EXIT
+
+          ready=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" != "1" ]; then
+            cat /tmp/turnstile-wrangler.log
+            exit 1
+          fi
+
+          node scripts/integration-test.mjs

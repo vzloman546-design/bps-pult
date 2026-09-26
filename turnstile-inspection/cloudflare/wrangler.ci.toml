@@ -1,0 +1,31 @@
+name = "turnstile-inspection-api-ci"
+main = "src/worker.js"
+compatibility_date = "2026-09-26"
+
+[vars]
+ALLOWED_ORIGIN = "https://example.pages.dev"
+SESSION_TTL_DAYS = "30"
+PUBLIC_APP_URL = "https://example.pages.dev"
+VAPID_PUBLIC_KEY = "BBDUMMY"
+VAPID_SUBJECT = "mailto:test@example.com"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "turnstile-inspection-ci"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[kv_namespaces]]
+binding = "DOCUMENTS"
+id = "00000000000000000000000000000000"
+
+[[durable_objects.bindings]]
+name = "INSPECTION_ROOM"
+class_name = "InspectionRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["InspectionRoom"]
+
+
+[browser]
+binding = "BROWSER"

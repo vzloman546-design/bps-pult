@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b5cab">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Осмотр турникетов">
+  <title>Осмотр турникетов</title>
+  <link rel="manifest" href="team-manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="64x64" href="favicon-v11.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon-v11.png">
+  <link rel="stylesheet" href="styles.css?v=12">
+  <link rel="stylesheet" href="team.css?v=6">
+</head>
+<body class="team-body">
+  <header class="team-topbar">
+    <div class="team-topbar-inner">
+      <button id="teamBackBtn" class="team-icon-btn hidden" type="button" aria-label="Назад">‹</button>
+      <div class="team-brand">
+        <h1>Осмотр турникетов</h1>
+        <div id="teamContext" class="team-context"></div>
+      </div>
+      <button id="teamBellBtn" class="team-icon-btn hidden" type="button" aria-label="Уведомления">
+        <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+        </svg>
+        <span id="teamBellBadge" class="team-badge hidden">0</span>
+      </button>
+    </div>
+  </header>
+
+  <div id="teamInstallBanner" class="team-install-banner hidden">
+    <span id="teamInstallText">Установить приложение на телефон</span>
+    <button id="teamInstallAction" class="btn primary small" type="button">Установить</button>
+  </div>
+
+  <main id="teamApp" class="team-main" aria-live="polite"></main>
+
+  <nav id="teamNav" class="team-nav hidden" aria-label="Навигация">
+    <button type="button" data-team-nav="home"><span>Главная</span></button>
+    <button type="button" data-team-nav="history"><span>История</span></button>
+    <button type="button" data-team-nav="profile"><span>Профиль</span></button>
+  </nav>
+
+  <div id="teamToast" class="team-toast" role="status" aria-live="polite"></div>
+
+  <dialog id="teamDialog" class="dialog">
+    <form method="dialog">
+      <h2 id="teamDialogTitle">Подтверждение</h2>
+      <p id="teamDialogText"></p>
+      <div class="dialog-actions">
+        <button class="btn secondary" value="cancel">Отмена</button>
+        <button id="teamDialogOk" class="btn primary" value="ok">Продолжить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="assets-init.js"></script>
+  <script src="asset-page1-1.js"></script>
+  <script src="asset-page2-1.js"></script><script src="asset-page2-2.js"></script>
+  <script src="asset-page3-1.js"></script><script src="asset-page3-2.js"></script>
+  <script src="asset-page4-1.js"></script><script src="asset-page4-2.js"></script>
+  <script src="asset-page5-1.js"></script><script src="asset-page5-2.js"></script>
+  <script src="asset-page6-1.js"></script>
+  <script src="asset-atlas-1.js"></script><script src="asset-atlas-2.js"></script><script src="asset-atlas-3.js"></script>
+  <script src="assets-meta.js"></script><script src="assets-final.js"></script>
+  <script src="team-config.js"></script>
+  <script src="team-storage.js?v=2"></script>
+  <script src="team-api.js?v=3"></script>
+  <script src="team-install.js?v=2"></script>
+  <script src="team-ui.js?v=5"></script>
+  <script src="pdf-renderer.js"></script>
+  <script src="team-app.js?v=6" defer></script>
+</body>
+</html>
