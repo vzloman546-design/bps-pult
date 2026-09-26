@@ -5,6 +5,7 @@ compatibility_date = "2026-09-26"
 [vars]
 ALLOWED_ORIGIN = "https://example.pages.dev"
 SESSION_TTL_DAYS = "30"
+PUBLIC_APP_URL = "https://example.pages.dev"
 VAPID_PUBLIC_KEY = "BBDUMMY"
 VAPID_SUBJECT = "mailto:test@example.com"
 
@@ -24,3 +25,7 @@ class_name = "InspectionRoom"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["InspectionRoom"]
+
+
+[browser]
+binding = "BROWSER"
