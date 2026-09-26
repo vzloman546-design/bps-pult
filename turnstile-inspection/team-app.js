@@ -117,10 +117,22 @@
       await api.flushQueue();
       await refreshBell();
 
-      const requestedInspection = Number(new URLSearchParams(location.search).get('inspection'));
+      const params = new URLSearchParams(location.search);
+      const requestedInspection = Number(params.get('inspection'));
+      const requestedGate = Number(params.get('gate'));
+
       if (Number.isInteger(requestedInspection) && requestedInspection > 0) {
         history.replaceState(null, '', location.pathname);
-        route('inspection', { inspectionId: requestedInspection });
+
+        if ([1,2,3,4].includes(requestedGate)) {
+          route('gate', {
+            inspectionId: requestedInspection,
+            gateNo: requestedGate,
+            fromHome: true
+          });
+        } else {
+          route('inspection', { inspectionId: requestedInspection });
+        }
       } else {
         route('home');
       }
