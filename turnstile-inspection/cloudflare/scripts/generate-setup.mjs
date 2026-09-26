@@ -18,18 +18,15 @@ if (!jwk.x || !jwk.y || !jwk.d) {
   throw new Error('Не удалось сформировать P-256 VAPID ключи');
 }
 
-const vapidJwk = JSON.stringify({
-  kty: 'EC',
-  crv: 'P-256',
-  x: jwk.x,
-  y: jwk.y,
-  d: jwk.d
-});
-
 const values = {
   BOOTSTRAP_TOKEN: randomSecret(),
-  VAPID_KEYPAIR_JWK: vapidJwk
+  VAPID_KEYPAIR_JWK: JSON.stringify({
+    kty: 'EC',
+    crv: 'P-256',
+    x: jwk.x,
+    y: jwk.y,
+    d: jwk.d
+  })
 };
 
 console.log(JSON.stringify(values, null, 2));
-console.error('\nСлужебные значения предназначены только для Cloudflare secrets и не должны попадать в GitHub.');
