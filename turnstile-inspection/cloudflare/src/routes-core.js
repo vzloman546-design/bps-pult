@@ -225,22 +225,48 @@ export async function handleHistoryRoute(request, env, user) {
 
   for (const inspection of rows) {
     const gates = (await env.DB.prepare(
-      `SELECT DISTINCT gate_no
-       FROM (
-         SELECT e.gate_no AS gate_no
-         FROM inspection_events e
-         WHERE e.inspection_id=? AND e.actor_user_id=? AND e.gate_no IS NOT NULL
+      `SELECT DISTINCT g.gate_no,g.status,g.assignee_user_id
+       FROM inspection_gates g
+       WHERE g.inspection_id=?
+         AND (
+           g.assignee_user_id=?
+           OR EXISTS (
+             SELECT 1
+             FROM inspection_events e
+             WHERE e.inspection_id=g.inspection_id
+               AND e.gate_no=g.gate_no
+               AND e.actor_user_id=?
+           )
+           OR EXISTS (
+             SELECT 1
+             FROM assignment_history ah
+             WHERE ah.inspection_gate_id=g.id
+               AND (ah.from_user_id=? OR ah.to_user_id=?)
+           )
+         )
+       ORDER BY g.gate_no`
+    ).bind(
+      inspection.id,
+      user.id,
+      user.id,
+      user.id,
+      user.id
+    ).all()).results || [];
 
-         UNION
+    const gateStates = gates.map(gate => {
+      let state = gate.status || 'pending';
 
-         SELECT g.gate_no AS gate_no
-         FROM inspection_gates g
-         JOIN assignment_history ah ON ah.inspection_gate_id=g.id
-         WHERE g.inspection_id=?
-           AND (ah.from_user_id=? OR ah.to_user_id=?)
-       )
-       ORDER BY gate_no`
-    ).bind(inspection.id, user.id, inspection.id, user.id, user.id).all()).results || [];
+      if (inspection.status === 'cancelled') {
+        state = 'cancelled';
+      } else if (gate.assignee_user_id !== user.id) {
+        state = 'transferred';
+      }
+
+      return {
+        gateNo: gate.gate_no,
+        state
+      };
+    });
 
     history.push({
       id: inspection.id,
@@ -249,7 +275,8 @@ export async function handleHistoryRoute(request, env, user) {
       startedAt: inspection.started_at,
       completedAt: inspection.completed_at,
       createdAt: inspection.created_at,
-      gateNos: gates.map(g => g.gate_no)
+      gateNos: gateStates.map(gate => gate.gateNo),
+      gateStates
     });
   }
 
