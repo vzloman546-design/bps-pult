@@ -353,11 +353,13 @@ export async function getGate(env, inspectionId, gateNo, user) {
   if (inspection?.status !== 'active') readOnly = true;
 
   const checks = (await env.DB.prepare(
-    `SELECT turnstile_code,visual,power,reader,final_status,remarks,
-            last_updated_by,updated_at
-     FROM turnstile_checks
-     WHERE inspection_gate_id=?
-     ORDER BY id`
+    `SELECT c.turnstile_code,c.visual,c.power,c.reader,c.final_status,c.remarks,
+            c.last_updated_by,c.updated_at,
+            editor.display_name AS last_updated_by_name
+     FROM turnstile_checks c
+     LEFT JOIN users editor ON editor.id=c.last_updated_by
+     WHERE c.inspection_gate_id=?
+     ORDER BY c.id`
   ).bind(gate.id).all()).results || [];
 
   return {
@@ -375,6 +377,7 @@ export async function getGate(env, inspectionId, gateNo, user) {
       status: c.final_status,
       remarks: c.remarks,
       lastUpdatedBy: c.last_updated_by,
+      lastUpdatedByName: c.last_updated_by_name,
       updatedAt: c.updated_at
     }))
   };
