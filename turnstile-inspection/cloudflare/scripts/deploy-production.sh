@@ -64,6 +64,8 @@ npx wrangler pages deploy ../pages-dist \
   --project-name="$PAGES_PROJECT" \
   --branch=main
 
+node scripts/sync-production-passwords.mjs
+
 echo "Initializing users..."
 INITIALIZED="$(curl -fsS "$WORKER_URL/api/bootstrap/status" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(String(!!JSON.parse(s).initialized)))")"
 
