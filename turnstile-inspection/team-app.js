@@ -987,7 +987,7 @@
       back: false,
       nav: true,
       bell: true,
-      context: state.user.role === 'admin' ? 'Архив осмотров' : 'Моя история'
+      context: state.user.role === 'admin' ? 'Архив актов' : 'Моя история'
     });
     loading('Загружаю историю…');
 
@@ -1020,7 +1020,7 @@
 
     els.app.innerHTML = `
       <section class="team-card">
-        <h2>${state.user.role === 'admin' ? 'Архив осмотров' : 'История моих осмотров'}</h2>
+        <h2>${state.user.role === 'admin' ? 'Архив актов' : 'История моих осмотров'}</h2>
         <div class="team-stack">${html}</div>
       </section>
     `;
