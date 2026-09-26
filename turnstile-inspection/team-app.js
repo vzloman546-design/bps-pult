@@ -438,6 +438,12 @@
                       </div>
                     </div>
                   </div>
+                  ${state.user.role === 'admin' && check.lastUpdatedByName ? `
+                    <div class="team-muted" style="margin-top:9px">
+                      Последнее изменение: ${ui.escapeHtml(check.lastUpdatedByName)}
+                      ${check.updatedAt ? ' · ' + ui.formatDate(check.updatedAt, true) : ''}
+                    </div>
+                  ` : ''}
                   ${gate.readOnly ? '' : `
                     <div class="turn-actions">
                       <button class="btn success small" type="button" data-all-ok="${index}">Исправен</button>
