@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS documents (
   inspection_id INTEGER NOT NULL,
   version INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending','ready','failed')),
+    CHECK (status IN ('pending','ready','failed','superseded')),
   kv_key TEXT,
   sha256 TEXT,
   byte_size INTEGER,
