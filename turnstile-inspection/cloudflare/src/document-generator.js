@@ -161,6 +161,7 @@ export async function generatePendingDocument(env, inspectionId, version) {
 
   if (!document) return { status: 'missing' };
   if (document.status === 'ready') return { status: 'ready' };
+  if (document.status !== 'pending') return { status: 'superseded' };
   if (!env.BROWSER) throw new Error('Browser Run binding is not configured');
 
   const snapshot = await loadDocumentSnapshot(env, inspectionId);
