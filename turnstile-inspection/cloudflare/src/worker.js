@@ -155,7 +155,7 @@ export class InspectionRoom {
         Number(job.version)
       );
 
-      if (result?.status === 'ready' || result?.status === 'missing') {
+      if (['ready','missing','superseded'].includes(result?.status)) {
         await this.state.storage.delete('pendingDocument');
         return;
       }
