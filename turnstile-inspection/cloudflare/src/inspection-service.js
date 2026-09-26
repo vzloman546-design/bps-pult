@@ -557,6 +557,11 @@ export async function reopenGate(env, inspectionId, gateNo, actor) {
        WHERE id=?`
     ).bind(gate.id),
     env.DB.prepare(
+      `UPDATE documents
+       SET status='failed'
+       WHERE inspection_id=? AND status='pending'`
+    ).bind(inspectionId),
+    env.DB.prepare(
       `INSERT INTO inspection_events
         (inspection_id,gate_no,actor_user_id,event_type,payload_json)
        VALUES (?,?,?,?,?)`
