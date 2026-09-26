@@ -998,8 +998,16 @@
             </span>
             <span class="team-muted">
               ${ui.formatDate(item.completedAt || item.startedAt || item.createdAt, true)}
-              ${item.gateNos?.length ? ' · ' + item.gateNos.map(no => no + ' гейт').join(', ') : ''}
             </span>
+            ${item.gateStates?.length ? `
+              <span class="team-muted">
+                ${item.gateStates.map(gate =>
+                  gate.gateNo + ' гейт — ' + ui.statusLabel(gate.state)
+                ).join(' · ')}
+              </span>
+            ` : (item.gateNos?.length ? `
+              <span class="team-muted">${item.gateNos.map(no => no + ' гейт').join(' · ')}</span>
+            ` : '')}
           </button>
         `).join('')
       : '<div class="team-empty"><strong>История пока пустая</strong></div>';
