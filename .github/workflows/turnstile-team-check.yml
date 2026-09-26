@@ -44,6 +44,8 @@ jobs:
           node --check sw.js
 
       - name: Build Cloudflare Pages bundle
+        env:
+          TURNSTILE_API_BASE: https://turnstile-inspection-api.example.workers.dev
         run: |
           bash pages-build.sh
           test -f pages-dist/index.html
