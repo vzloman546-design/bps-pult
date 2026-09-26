@@ -122,8 +122,37 @@
     return map[code] || 'Не удалось выполнить операцию';
   }
 
+  async function pushState() {
+    if (
+      !('serviceWorker' in navigator) ||
+      !('PushManager' in window) ||
+      !('Notification' in window)
+    ) {
+      return {
+        supported: false,
+        permission: 'unsupported',
+        subscribed: false,
+        subscription: null
+      };
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+
+    return {
+      supported: true,
+      permission: Notification.permission,
+      subscribed: !!subscription,
+      subscription
+    };
+  }
+
   async function enablePush() {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    if (
+      !('serviceWorker' in navigator) ||
+      !('PushManager' in window) ||
+      !('Notification' in window)
+    ) {
       throw new Error('push_not_supported');
     }
 
@@ -162,6 +191,7 @@
     progressBar,
     syncLabel,
     errorMessage,
+    pushState,
     enablePush
   };
 })();
