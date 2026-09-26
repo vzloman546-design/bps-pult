@@ -9,8 +9,6 @@ ALLOWED_ORIGIN = "https://REPLACE.pages.dev"
 SESSION_TTL_DAYS = "30"
 PUBLIC_APP_URL = "https://REPLACE.pages.dev"
 
-# Публичная часть VAPID-ключа. Приватная хранится только как secret.
-VAPID_PUBLIC_KEY = "REPLACE_VAPID_PUBLIC_KEY"
 VAPID_SUBJECT = "https://REPLACE.pages.dev"
 
 [[d1_databases]]
@@ -30,11 +28,8 @@ class_name = "InspectionRoom"
 tag = "v1"
 new_sqlite_classes = ["InspectionRoom"]
 
-# Secrets, которые задаются через wrangler secret put и никогда не коммитятся:
-# SESSION_PEPPER      - случайная строка для хеширования токенов сессий
-# PASSWORD_PEPPER     - отдельная случайная строка для паролей
-# BOOTSTRAP_TOKEN     - одноразовая защита первого администратора
-# VAPID_PRIVATE_KEY   - приватная часть ключа Web Push
+# Служебные значения задаются в Cloudflare как Worker secrets.
+# BOOTSTRAP_TOKEN и VAPID_KEYPAIR_JWK не хранятся в репозитории.
 
 
 [browser]
