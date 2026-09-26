@@ -84,13 +84,15 @@ export async function getInspectionSummary(env, inspectionId, user) {
 
   const gates = (await env.DB.prepare(sql).bind(...binds).all()).results || [];
 
-  const document = await env.DB.prepare(
-    `SELECT id,version,status,byte_size,ready_at
-     FROM documents
-     WHERE inspection_id=?
-     ORDER BY version DESC
-     LIMIT 1`
-  ).bind(inspectionId).first();
+  const document = user.role === 'admin'
+    ? await env.DB.prepare(
+        `SELECT id,version,status,byte_size,ready_at
+         FROM documents
+         WHERE inspection_id=?
+         ORDER BY version DESC
+         LIMIT 1`
+      ).bind(inspectionId).first()
+    : null;
 
   return {
     id: inspection.id,
