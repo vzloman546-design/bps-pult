@@ -86,6 +86,23 @@ export async function handleUserRoutes(request, env, parts, user) {
       throw new HttpError(409, 'cannot_demote_self');
     }
 
+    const wouldRemoveAdmin =
+      target.role === 'admin' &&
+      target.active &&
+      (input.active === false || (input.role != null && input.role !== 'admin'));
+
+    if (wouldRemoveAdmin) {
+      const adminCount = await env.DB.prepare(
+        `SELECT COUNT(*) AS count
+         FROM users
+         WHERE role='admin' AND active=1`
+      ).first();
+
+      if (Number(adminCount?.count || 0) <= 1) {
+        throw new HttpError(409, 'last_active_admin');
+      }
+    }
+
     if (input.active === false) {
       const activeAssignment = await env.DB.prepare(
         `SELECT 1 AS ok
