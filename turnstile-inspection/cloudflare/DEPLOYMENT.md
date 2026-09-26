@@ -19,7 +19,8 @@ Cloudflare Pages:
 
 - Production branch: `feature/turnstile-team-workflow` до финального merge, затем `main`;
 - Build command: `bash turnstile-inspection/pages-build.sh`;
-- Build output directory: `turnstile-inspection/pages-dist`.
+- Build output directory: `turnstile-inspection/pages-dist`;
+- Pages environment variable `TURNSTILE_API_BASE`: публичный HTTPS URL Worker, например `https://turnstile-inspection-api.<account>.workers.dev`.
 
 Скрипт публикует только PWA и шаблоны PDF. Исходники backend и конфигурация Worker в Pages output не копируются.
 
