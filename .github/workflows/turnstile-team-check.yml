@@ -80,3 +80,28 @@ jobs:
       - name: Wrangler build check
         working-directory: turnstile-inspection/cloudflare
         run: npx wrangler deploy --dry-run --config wrangler.ci.toml
+
+      - name: Run local D1 integration flow
+        working-directory: turnstile-inspection/cloudflare
+        run: |
+          rm -rf .wrangler/state
+          npx wrangler d1 execute turnstile-inspection-test --local --config wrangler.test.toml --file=./schema.sql
+          npx wrangler dev --local --config wrangler.test.toml --port 8787 > /tmp/turnstile-wrangler.log 2>&1 &
+          WRANGLER_PID=$!
+          trap 'kill $WRANGLER_PID 2>/dev/null || true' EXIT
+
+          ready=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" != "1" ]; then
+            cat /tmp/turnstile-wrangler.log
+            exit 1
+          fi
+
+          node scripts/integration-test.mjs
