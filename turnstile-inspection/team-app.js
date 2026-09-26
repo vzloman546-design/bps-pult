@@ -1226,7 +1226,7 @@
 
       <section class="team-card">
         <h3>Уведомления</h3>
-        <p class="team-muted">Разрешение запрашивается только после нажатия этой кнопки.</p>
+        <p id="pushStatusText" class="team-muted">Проверяю состояние уведомлений…</p>
         <button id="enablePushBtn" class="btn secondary" type="button">Включить уведомления</button>
       </section>
 
@@ -1238,12 +1238,56 @@
       </section>
     `;
 
-    document.getElementById('enablePushBtn').onclick = async () => {
-      const button = document.getElementById('enablePushBtn');
-      button.disabled = true;
+    const pushButton = document.getElementById('enablePushBtn');
+    const pushStatusText = document.getElementById('pushStatusText');
+
+    async function refreshPushState() {
+      try {
+        const current = await ui.pushState();
+
+        if (!current.supported) {
+          pushButton.textContent = 'Уведомления недоступны';
+          pushButton.disabled = true;
+          pushStatusText.textContent = 'Этот браузер или режим приложения не поддерживает Web Push.';
+          return;
+        }
+
+        if (current.permission === 'denied') {
+          pushButton.textContent = 'Уведомления запрещены';
+          pushButton.disabled = true;
+          pushStatusText.textContent = 'Разрешение отключено в настройках уведомлений iPhone.';
+          return;
+        }
+
+        if (current.permission === 'granted' && current.subscribed) {
+          pushButton.textContent = 'Уведомления включены';
+          pushButton.disabled = true;
+          pushStatusText.textContent = 'Push-уведомления активны на этом устройстве.';
+          api.savePushSubscription(current.subscription).catch(() => {});
+          return;
+        }
+
+        pushButton.disabled = false;
+
+        if (current.permission === 'granted') {
+          pushButton.textContent = 'Восстановить уведомления';
+          pushStatusText.textContent = 'Разрешение есть, но push-подписку нужно восстановить.';
+        } else {
+          pushButton.textContent = 'Включить уведомления';
+          pushStatusText.textContent = 'Разрешение будет запрошено только после нажатия кнопки.';
+        }
+      } catch {
+        pushButton.disabled = false;
+        pushButton.textContent = 'Включить уведомления';
+        pushStatusText.textContent = 'Не удалось проверить состояние уведомлений.';
+      }
+    }
+
+    pushButton.onclick = async () => {
+      pushButton.disabled = true;
       try {
         await ui.enablePush();
-        button.textContent = 'Уведомления включены';
+        await refreshPushState();
         ui.toast('Уведомления включены.');
       } catch (error) {
         const message = error.message === 'push_not_supported'
@@ -1254,10 +1298,11 @@
               ? 'Push ещё не настроен на сервере.'
               : 'Не удалось включить уведомления.';
         ui.toast(message, 4200);
-      } finally {
-        button.disabled = false;
+        await refreshPushState();
       }
     };
+
+    await refreshPushState();
 
     const usersButton = document.getElementById('profileUsersBtn');
     if (usersButton) usersButton.onclick = () => route('users');
