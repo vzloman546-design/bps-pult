@@ -84,26 +84,21 @@ self.addEventListener('fetch', event => {
   }
 
   if (url.origin === self.location.origin) {
-    event.respondWith((async () => {
-      const cached = await caches.match(event.request);
-
-      const network = fetch(event.request)
-        .then(async response => {
-          if (response.ok) {
-            const cache = await caches.open(CACHE);
-            await cache.put(event.request, response.clone());
-          }
-          return response;
-        })
-        .catch(() => null);
-
-      if (cached) {
-        event.waitUntil(network.then(() => undefined));
-        return cached;
+    const network = fetch(event.request).then(async response => {
+      if (response.ok) {
+        const cache = await caches.open(CACHE);
+        await cache.put(event.request, response.clone());
       }
+      return response;
+    });
 
-      return (await network) || new Response('Offline', { status: 503 });
-    })());
+    event.waitUntil(network.then(() => undefined).catch(() => undefined));
+
+    event.respondWith(
+      caches.match(event.request)
+        .then(cached => cached || network)
+        .catch(() => new Response('Offline', { status: 503 }))
+    );
   }
 });
 
