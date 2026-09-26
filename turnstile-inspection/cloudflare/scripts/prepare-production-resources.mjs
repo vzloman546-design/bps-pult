@@ -132,6 +132,16 @@ binding = "BROWSER"
 
 await writeFile(new URL('../wrangler.production.toml', import.meta.url), wrangler);
 
+await writeFile(
+  new URL('../deployment.production.json', import.meta.url),
+  JSON.stringify({
+    d1Id,
+    kvId,
+    pagesProject,
+    pagesUrl
+  }, null, 2) + '\n'
+);
+
 await output('d1_id', d1Id);
 await output('kv_id', kvId);
 await output('pages_project', pagesProject);
