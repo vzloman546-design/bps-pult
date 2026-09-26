@@ -651,16 +651,6 @@ export async function recomputeCompletion(env, inspectionId, gateNo, actorUserId
       JSON.stringify({ status: newStatus })
     ).run();
 
-    if (done) {
-      await notifyAdmins(
-        env,
-        'gate_completed',
-        `${gateNo} гейт завершён`,
-        `Все турникеты ${gateNo} гейта заполнены.`,
-        inspectionId,
-        gateNo
-      );
-    }
   }
 
   const all = await env.DB.prepare(
