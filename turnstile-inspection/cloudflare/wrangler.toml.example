@@ -11,7 +11,7 @@ PUBLIC_APP_URL = "https://REPLACE.pages.dev"
 
 # Публичная часть VAPID-ключа. Приватная хранится только как secret.
 VAPID_PUBLIC_KEY = "REPLACE_VAPID_PUBLIC_KEY"
-VAPID_SUBJECT = "mailto:REPLACE@example.com"
+VAPID_SUBJECT = "https://REPLACE.pages.dev"
 
 [[d1_databases]]
 binding = "DB"
