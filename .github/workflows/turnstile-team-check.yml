@@ -40,6 +40,7 @@ jobs:
           node --check team-ui.js
           node --check team-app.js
           node --check pdf-renderer.js
+          node --check server-print.js
           node --check sw.js
 
       - name: Install Worker dependencies
@@ -57,6 +58,7 @@ jobs:
           node --check src/inspection-service.js
           node --check src/routes-core.js
           node --check src/routes-inspections.js
+          node --check src/document-generator.js
           node --check src/worker.js
 
       - name: Wrangler build check
