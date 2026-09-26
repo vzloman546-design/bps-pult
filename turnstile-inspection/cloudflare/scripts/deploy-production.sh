@@ -74,30 +74,44 @@ if [ "$INITIALIZED" != "true" ]; then
   printf '%s' "$BOOTSTRAP_TOKEN" \
     | npx wrangler secret put BOOTSTRAP_TOKEN --config wrangler.production.toml
 
-  echo "Waiting for BOOTSTRAP_TOKEN propagation..."
+  node -e '
+    const passwords=JSON.parse(process.env.TURNSTILE_USER_PASSWORDS_JSON);
+    process.stdout.write(JSON.stringify({
+      username:"kakur13",
+      displayName:"Какурин Артем Русланович",
+      password:passwords.kakur13
+    }));
+  ' > /tmp/bootstrap-admin.json
+
+  echo "Waiting for bootstrap secret propagation and creating administrator..."
   ready=0
-  for _ in $(seq 1 30); do
-    status="$(curl -sS -o /tmp/bootstrap-check.json -w '%{http_code}' \
+
+  for _ in $(seq 1 45); do
+    status="$(curl -sS -o /tmp/bootstrap-response.json -w '%{http_code}' \
       -X POST "$WORKER_URL/api/bootstrap/admin" \
       -H "content-type: application/json" \
       -H "x-bootstrap-token: $BOOTSTRAP_TOKEN" \
-      --data '{"username":"__probe__","displayName":"__probe__","password":"123"}' || true)"
+      --data-binary @/tmp/bootstrap-admin.json || true)"
 
-    if [ "$status" = "400" ]; then
+    if [ "$status" = "201" ] || [ "$status" = "409" ]; then
       ready=1
       break
+    fi
+
+    if [ "$status" != "403" ]; then
+      echo "Unexpected bootstrap response: HTTP $status" >&2
+      cat /tmp/bootstrap-response.json >&2 || true
+      exit 1
     fi
 
     sleep 2
   done
 
   if [ "$ready" != "1" ]; then
-    echo "BOOTSTRAP_TOKEN did not propagate in time" >&2
-    cat /tmp/bootstrap-check.json >&2 || true
+    echo "Bootstrap secret did not propagate in time" >&2
     exit 1
   fi
 fi
-
 TURNSTILE_API_BASE="$WORKER_URL" \
 TURNSTILE_BOOTSTRAP_TOKEN="$BOOTSTRAP_TOKEN" \
 node scripts/provision-production-users.mjs
