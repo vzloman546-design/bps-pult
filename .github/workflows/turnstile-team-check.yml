@@ -63,7 +63,7 @@ jobs:
         working-directory: turnstile-inspection/cloudflare
         run: |
           node scripts/generate-setup.mjs > /tmp/turnstile-setup.json 2>/dev/null
-          node -e "const x=require('/tmp/turnstile-setup.json'); for (const k of ['SESSION_PEPPER','PASSWORD_PEPPER','BOOTSTRAP_TOKEN','VAPID_PUBLIC_KEY','VAPID_PRIVATE_KEY']) if (!x[k]) process.exit(1)"
+          node -e "const x=require('/tmp/turnstile-setup.json'); for (const k of ['BOOTSTRAP_TOKEN','VAPID_KEYPAIR_JWK']) if (!x[k]) process.exit(1)"
 
       - name: Validate production user manifest
         working-directory: turnstile-inspection/cloudflare
