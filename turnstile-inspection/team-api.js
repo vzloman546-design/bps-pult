@@ -8,6 +8,10 @@
     return String(cfg.apiBase || '').replace(/\/$/, '') + path;
   }
 
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
   async function request(path, options = {}) {
     const session = storage.getSession();
     const headers = new Headers(options.headers || {});
@@ -19,14 +23,21 @@
 
     if (session?.token) headers.set('authorization', 'Bearer ' + session.token);
 
-    const response = await fetch(apiUrl(path), {
+    const run = () => fetch(apiUrl(path), {
       method: options.method || 'GET',
       headers,
       body: options.body,
       cache: 'no-store'
     });
 
-    if (response.status === 401) {
+    let response = await run();
+
+    if (response.status === 401 && session?.token && path !== '/api/auth/login') {
+      await sleep(650);
+      response = await run();
+    }
+
+    if (response.status === 401 && session?.token && path === '/api/me') {
       storage.setSession(null);
       window.dispatchEvent(new CustomEvent('turnstile:session-expired'));
     }
