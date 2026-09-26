@@ -4,6 +4,7 @@ import {
   login,
   logout,
   newPasswordSalt,
+  PASSWORD_ITERATIONS,
   requireAdmin,
   safeUser
 } from './auth.js';
@@ -57,9 +58,9 @@ export async function handleUserRoutes(request, env, parts, user) {
     try {
       await env.DB.prepare(
         `INSERT INTO users
-          (id,username,display_name,role,password_hash,password_salt)
-         VALUES (?,?,?,?,?,?)`
-      ).bind(id, username, displayName, role, passwordHash, salt).run();
+          (id,username,display_name,role,password_hash,password_salt,password_iterations)
+         VALUES (?,?,?,?,?,?,?)`
+      ).bind(id, username, displayName, role, passwordHash, salt, PASSWORD_ITERATIONS).run();
     } catch {
       throw new HttpError(409, 'username_exists');
     }
@@ -143,9 +144,9 @@ export async function handleUserRoutes(request, env, parts, user) {
       await env.DB.batch([
         env.DB.prepare(
           `UPDATE users
-           SET password_hash=?,password_salt=?,updated_at=datetime('now')
+           SET password_hash=?,password_salt=?,password_iterations=?,updated_at=datetime('now')
            WHERE id=?`
-        ).bind(passwordHash, salt, target.id),
+        ).bind(passwordHash, salt, PASSWORD_ITERATIONS, target.id),
         env.DB.prepare(`DELETE FROM sessions WHERE user_id=?`).bind(target.id)
       ]);
     }
@@ -186,9 +187,9 @@ export async function handleBootstrapRoutes(request, env, parts) {
 
     await env.DB.prepare(
       `INSERT INTO users
-        (id,username,display_name,role,password_hash,password_salt)
-       VALUES (?,?,?,'admin',?,?)`
-    ).bind(id, username, displayName, passwordHash, salt).run();
+        (id,username,display_name,role,password_hash,password_salt,password_iterations)
+       VALUES (?,?,?,'admin',?,?,?)`
+    ).bind(id, username, displayName, passwordHash, salt, PASSWORD_ITERATIONS).run();
 
     return json({
       ok: true,
