@@ -65,6 +65,12 @@ jobs:
           node scripts/generate-setup.mjs > /tmp/turnstile-setup.json 2>/dev/null
           node -e "const x=require('/tmp/turnstile-setup.json'); for (const k of ['SESSION_PEPPER','PASSWORD_PEPPER','BOOTSTRAP_TOKEN','VAPID_PUBLIC_KEY','VAPID_PRIVATE_KEY']) if (!x[k]) process.exit(1)"
 
+      - name: Validate production user manifest
+        working-directory: turnstile-inspection/cloudflare
+        run: |
+          node --check scripts/provision-production-users.mjs
+          node -e "const fs=require('fs'); const x=JSON.parse(fs.readFileSync('scripts/users.production.json','utf8')); if (!Array.isArray(x.users) || x.users.length !== 5) process.exit(1); if (x.users.some(u => !u.displayName || !u.username || !u.passwordEnv || 'password' in u)) process.exit(1)"
+
       - name: Check Worker JavaScript syntax
         working-directory: turnstile-inspection/cloudflare
         run: |
