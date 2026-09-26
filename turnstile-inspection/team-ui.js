@@ -109,7 +109,13 @@
       inspection_not_completed:'Осмотр ещё не завершён',
       inspection_not_active:'Завершённый осмотр доступен только для просмотра',
       gate_already_completed:'Завершённый гейт сначала нужно переоткрыть',
-      push_not_configured:'Push-уведомления ещё не настроены'
+      push_not_configured:'Push-уведомления ещё не настроены',
+      cannot_disable_self:'Нельзя отключить собственную учётную запись',
+      cannot_demote_self:'Нельзя снять с себя права администратора',
+      last_active_admin:'Нельзя отключить последнего активного администратора',
+      user_has_active_assignments:'Сначала переназначь активные гейты этого сотрудника',
+      inspection_not_cancellable:'Этот осмотр уже нельзя отменить',
+      gate_not_completed:'Переоткрыть можно только завершённый гейт'
     };
     return map[code] || 'Не удалось выполнить операцию';
   }
