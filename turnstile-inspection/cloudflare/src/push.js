@@ -1,27 +1,57 @@
 import { buildPushPayload } from '@block65/webcrypto-web-push';
 
-function configured(env) {
-  return !!(
-    env.VAPID_PUBLIC_KEY &&
-    env.VAPID_PRIVATE_KEY &&
-    env.VAPID_SUBJECT
-  );
+function b64urlToBytes(value) {
+  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, char => char.charCodeAt(0));
+}
+
+function bytesToB64url(bytes) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+export function vapidKeys(env) {
+  if (!env.VAPID_KEYPAIR_JWK || !env.VAPID_SUBJECT) return null;
+
+  try {
+    const jwk = JSON.parse(env.VAPID_KEYPAIR_JWK);
+    if (!jwk.x || !jwk.y || !jwk.d) return null;
+
+    const x = b64urlToBytes(jwk.x);
+    const y = b64urlToBytes(jwk.y);
+    if (x.length !== 32 || y.length !== 32) return null;
+
+    const publicBytes = new Uint8Array(65);
+    publicBytes[0] = 0x04;
+    publicBytes.set(x, 1);
+    publicBytes.set(y, 33);
+
+    return {
+      subject: env.VAPID_SUBJECT,
+      publicKey: bytesToB64url(publicBytes),
+      privateKey: jwk.d
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function vapidPublicKey(env) {
+  return vapidKeys(env)?.publicKey || '';
 }
 
 export async function sendPushToUser(env, userId, notification) {
-  if (!configured(env)) return { delivered: 0, skipped: true };
+  const vapid = vapidKeys(env);
+  if (!vapid) return { delivered: 0, skipped: true };
 
   const rows = (await env.DB.prepare(
     `SELECT id,endpoint,p256dh,auth
      FROM push_subscriptions
      WHERE user_id=? AND active=1`
   ).bind(userId).all()).results || [];
-
-  const vapid = {
-    subject: env.VAPID_SUBJECT,
-    publicKey: env.VAPID_PUBLIC_KEY,
-    privateKey: env.VAPID_PRIVATE_KEY
-  };
 
   let delivered = 0;
 
