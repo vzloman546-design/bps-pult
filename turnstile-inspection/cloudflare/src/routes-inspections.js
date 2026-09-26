@@ -195,12 +195,17 @@ export async function handleInspectionRoutes(request, env, parts, user) {
     const digest = await crypto.subtle.digest('SHA-256', bytes);
     const sha256 = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
 
-    await env.DB.prepare(
+    const transition = await env.DB.prepare(
       `UPDATE documents
        SET status='ready',kv_key=?,sha256=?,byte_size=?,
            generated_by_user_id=?,ready_at=datetime('now')
-       WHERE id=?`
+       WHERE id=? AND status='pending'`
     ).bind(key, sha256, bytes.byteLength, user.id, document.id).run();
+
+    if (!Number(transition.meta?.changes || 0)) {
+      await env.DOCUMENTS.delete(key).catch(() => {});
+      throw new HttpError(409, 'document_superseded');
+    }
 
     await env.DB.prepare(
       `INSERT INTO inspection_events
