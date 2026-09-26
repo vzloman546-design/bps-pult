@@ -73,7 +73,29 @@ if [ "$INITIALIZED" != "true" ]; then
   BOOTSTRAP_TOKEN="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/tmp/turnstile-setup.json','utf8')).BOOTSTRAP_TOKEN)")"
   printf '%s' "$BOOTSTRAP_TOKEN" \
     | npx wrangler secret put BOOTSTRAP_TOKEN --config wrangler.production.toml
-  wait_worker
+
+  echo "Waiting for BOOTSTRAP_TOKEN propagation..."
+  ready=0
+  for _ in $(seq 1 30); do
+    status="$(curl -sS -o /tmp/bootstrap-check.json -w '%{http_code}' \
+      -X POST "$WORKER_URL/api/bootstrap/admin" \
+      -H "content-type: application/json" \
+      -H "x-bootstrap-token: $BOOTSTRAP_TOKEN" \
+      --data '{"username":"__probe__","displayName":"__probe__","password":"123"}' || true)"
+
+    if [ "$status" = "400" ]; then
+      ready=1
+      break
+    fi
+
+    sleep 2
+  done
+
+  if [ "$ready" != "1" ]; then
+    echo "BOOTSTRAP_TOKEN did not propagate in time" >&2
+    cat /tmp/bootstrap-check.json >&2 || true
+    exit 1
+  fi
 fi
 
 TURNSTILE_API_BASE="$WORKER_URL" \
