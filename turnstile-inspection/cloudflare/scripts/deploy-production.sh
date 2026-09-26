@@ -128,6 +128,47 @@ done
 
 curl -fsS "$PAGES_URL/" >/dev/null
 
+echo "Checking deployed API configuration..."
+curl -fsS "$PAGES_URL/team-config.js" -o /tmp/team-config.js
+grep -F "$WORKER_URL" /tmp/team-config.js >/dev/null
+
+echo "Checking browser-origin login and CORS..."
+node -e '
+  const passwords=JSON.parse(process.env.TURNSTILE_USER_PASSWORDS_JSON);
+  process.stdout.write(JSON.stringify({
+    username:"kakur13",
+    password:passwords.kakur13
+  }));
+' > /tmp/login-admin.json
+
+LOGIN_STATUS="$(curl -sS -D /tmp/login-headers.txt -o /tmp/login-response.json -w '%{http_code}' \
+  -X POST "$WORKER_URL/api/auth/login" \
+  -H "Origin: $PAGES_URL" \
+  -H "Content-Type: application/json" \
+  --data-binary @/tmp/login-admin.json || true)"
+
+if [ "$LOGIN_STATUS" != "200" ]; then
+  echo "Production browser-origin login failed: HTTP $LOGIN_STATUS" >&2
+  cat /tmp/login-response.json >&2 || true
+  exit 1
+fi
+
+grep -i "^access-control-allow-origin: $PAGES_URL" /tmp/login-headers.txt >/dev/null
+
+ADMIN_TOKEN="$(node -e "const x=JSON.parse(require('fs').readFileSync('/tmp/login-response.json','utf8'));process.stdout.write(x.token||'')")"
+test -n "$ADMIN_TOKEN"
+
+ME_STATUS="$(curl -sS -o /tmp/me-response.json -w '%{http_code}' \
+  "$WORKER_URL/api/me" \
+  -H "Origin: $PAGES_URL" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" || true)"
+
+if [ "$ME_STATUS" != "200" ]; then
+  echo "Production authenticated /api/me failed: HTTP $ME_STATUS" >&2
+  cat /tmp/me-response.json >&2 || true
+  exit 1
+fi
+
 echo "Production deployment completed"
 echo "PWA: $PAGES_URL"
 echo "Worker: $WORKER_URL"
