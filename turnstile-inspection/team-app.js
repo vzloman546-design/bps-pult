@@ -116,7 +116,6 @@
       state.user = await api.me();
       await api.flushQueue();
       await refreshBell();
-      recoverPendingDocuments().catch(() => {});
 
       const requestedInspection = Number(new URLSearchParams(location.search).get('inspection'));
       if (Number.isInteger(requestedInspection) && requestedInspection > 0) {
@@ -466,8 +465,7 @@
         }
 
         if (result?.inspectionStatus === 'completed') {
-          ui.toast('Осмотр завершён. Формируется акт.', 3500);
-          ensureDocumentGenerated(state.route.inspectionId).catch(() => {});
+          ui.toast('Осмотр завершён. Акт формируется автоматически.', 3500);
         }
       } catch (error) {
         handleError(error);
@@ -548,7 +546,7 @@
         }, 600);
       }
       if (event.type === 'inspection_completed') {
-        ensureDocumentGenerated(state.route.inspectionId).catch(() => {});
+        ui.toast('Все выбранные гейты завершены. Акт формируется автоматически.', 3800);
       }
       if (event.type === 'document_ready') {
         ui.toast('Акт сформирован и готов.');
@@ -688,25 +686,6 @@
     }
   }
 
-  async function recoverPendingDocuments() {
-    if (!state.user || !navigator.onLine || state.generating.size) return;
-
-    const inspections = await api.inspections();
-    const completed = inspections
-      .filter(item => item.status === 'completed')
-      .slice(0, 12);
-
-    for (const item of completed) {
-      try {
-        const documentInfo = await api.document(item.id);
-        if (documentInfo?.status === 'pending') {
-          await ensureDocumentGenerated(item.id);
-        }
-      } catch {
-        // Другой клиент мог уже сформировать документ — это нормальная гонка.
-      }
-    }
-  }
 
   async function renderInspection() {
     setChrome({
@@ -720,10 +699,6 @@
     const inspection = await api.inspection(state.route.inspectionId);
     const users = state.user.role === 'admin' ? (await api.users()).filter(user => user.active) : [];
     const progress = inspectionProgress(inspection);
-
-    if (inspection.status === 'completed' && inspection.document?.status === 'pending') {
-      ensureDocumentGenerated(inspection.id).catch(() => {});
-    }
 
     els.context.textContent = inspection.title || ('Осмотр №' + inspection.id);
 
@@ -805,7 +780,7 @@
           <div class="team-actions" style="margin-top:12px">
             ${inspection.document.status === 'ready'
               ? '<button id="openDocumentBtn" class="btn primary" type="button">Открыть PDF</button>'
-              : '<button id="generateDocumentBtn" class="btn secondary" type="button">Сформировать сейчас</button>'}
+              : '<button id="generateDocumentBtn" class="btn secondary" type="button">Сформировать на устройстве</button>'}
           </div>
         </section>
       ` : ''}
@@ -899,9 +874,6 @@
         state.refreshTimer = setTimeout(() => {
           if (state.route.name === 'inspection') renderInspection().catch(() => {});
         }, 500);
-      }
-      if (event.type === 'inspection_completed') {
-        ensureDocumentGenerated(inspection.id).catch(() => {});
       }
     }));
   }
@@ -1282,9 +1254,7 @@
   window.addEventListener('turnstile:session-expired', showLogin);
 
   window.addEventListener('turnstile:queue-flushed', event => {
-    if (event.detail?.sent) {
-      recoverPendingDocuments().catch(() => {});
-    }
+    if (event.detail?.sent) refreshBell().catch(() => {});
   });
 
   window.addEventListener('turnstile:queue-changed', () => {
@@ -1300,7 +1270,6 @@
     api.flushQueue()
       .then(async result => {
         if (result.sent) ui.toast('Отложенные изменения синхронизированы.');
-        await recoverPendingDocuments().catch(() => {});
 
         if (state.route.name === 'gate') {
           renderGate().catch(() => {});
