@@ -1,10 +1,10 @@
 {
-  "id": "./team.html",
+  "id": "./",
   "name": "Осмотр турникетов",
   "short_name": "Турникеты",
   "description": "Совместный технический осмотр турникетов входных групп",
   "lang": "ru",
-  "start_url": "./team.html",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
