@@ -1312,6 +1312,16 @@
     if (event.detail?.sent) refreshBell().catch(() => {});
   });
 
+  window.addEventListener('turnstile:sync-conflict', event => {
+    const gateNo = Number(event.detail?.gateNo);
+    ui.toast(
+      gateNo
+        ? 'Изменение по ' + gateNo + ' гейту не отправлено: гейт уже переназначен. Запись сохранена на телефоне.'
+        : 'Одно изменение не отправлено из-за изменения назначения. Оно сохранено на телефоне.',
+      5200
+    );
+  });
+
   window.addEventListener('turnstile:queue-changed', () => {
     const gateSync = document.getElementById('gateSync');
     const profileSync = document.getElementById('profileSync');
