@@ -96,9 +96,20 @@
           sent++;
         } catch (error) {
           remaining.push(entry);
-          if (error.status === 401 || error.status === 403) {
+
+          if (error.status === 401) {
             remaining.push(...source.slice(i + 1));
             break;
+          }
+
+          if (error.status === 403) {
+            window.dispatchEvent(new CustomEvent('turnstile:sync-conflict', {
+              detail: {
+                inspectionId: entry.inspectionId,
+                gateNo: entry.gateNo,
+                code: entry.code
+              }
+            }));
           }
         }
       }
