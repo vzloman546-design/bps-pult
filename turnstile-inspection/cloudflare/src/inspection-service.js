@@ -538,6 +538,12 @@ export async function reopenGate(env, inspectionId, gateNo, actor) {
   ).bind(inspectionId).first();
 
   if (!inspection) throw new HttpError(404, 'inspection_not_found');
+  if (inspection.status !== 'completed') {
+    throw new HttpError(409, 'inspection_not_completed');
+  }
+  if (gate.status !== 'completed') {
+    throw new HttpError(409, 'gate_not_completed');
+  }
 
   await env.DB.batch([
     env.DB.prepare(
