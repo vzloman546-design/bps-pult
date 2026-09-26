@@ -189,7 +189,7 @@ export async function resolveUserFromToken(token, env) {
 
   if (!row) return null;
 
-  env.DB.prepare(
+  await env.DB.prepare(
     `UPDATE sessions SET last_seen_at=datetime('now') WHERE id=?`
   ).bind(row.session_id).run();
 
