@@ -6,6 +6,7 @@ on:
       - feature/turnstile-team-workflow
     paths:
       - ".github/workflows/turnstile-cloudflare-deploy.yml"
+      - "turnstile-inspection/**"
   workflow_dispatch:
 
 permissions:
