@@ -18,9 +18,25 @@ copy_as() {
 # Team PWA becomes the root Cloudflare Pages application.
 copy_as "team.html" "index.html"
 copy "team.html"
+
+API_BASE="${TURNSTILE_API_BASE:-}"
+if [ -z "$API_BASE" ]; then
+  echo "TURNSTILE_API_BASE is required for Cloudflare Pages build" >&2
+  exit 1
+fi
+
+cat > "$OUT/team-config.js" <<EOF
+window.TURNSTILE_TEAM_CONFIG = {
+  enabled: true,
+  apiBase: "${API_BASE%/}",
+  appName: "Осмотр турникетов",
+  syncQueueKey: "turnstileTeam.syncQueue.v1",
+  sessionKey: "turnstileTeam.session.v1"
+};
+EOF
+
 copy "styles.css"
 copy "team.css"
-copy "team-config.js"
 copy "team-storage.js"
 copy "team-api.js"
 copy "team-install.js"
