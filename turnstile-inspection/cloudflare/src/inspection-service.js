@@ -100,15 +100,25 @@ export async function getInspectionSummary(env, inspectionId, user) {
 
   const gates = (await env.DB.prepare(sql).bind(...binds).all()).results || [];
 
-  const document = user.role === 'admin'
-    ? await env.DB.prepare(
-        `SELECT id,version,status,byte_size,ready_at
-         FROM documents
-         WHERE inspection_id=?
-         ORDER BY version DESC
-         LIMIT 1`
-      ).bind(inspectionId).first()
-    : null;
+  let document = null;
+
+  if (user.role === 'admin') {
+    document = inspection.status === 'active'
+      ? await env.DB.prepare(
+          `SELECT id,version,status,byte_size,ready_at
+           FROM documents
+           WHERE inspection_id=? AND status='ready'
+           ORDER BY version DESC
+           LIMIT 1`
+        ).bind(inspectionId).first()
+      : await env.DB.prepare(
+          `SELECT id,version,status,byte_size,ready_at
+           FROM documents
+           WHERE inspection_id=? AND status<>'superseded'
+           ORDER BY version DESC
+           LIMIT 1`
+        ).bind(inspectionId).first();
+  }
 
   return {
     id: inspection.id,
