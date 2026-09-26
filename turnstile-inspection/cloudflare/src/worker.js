@@ -10,6 +10,7 @@ import {
 } from './routes-core.js';
 import { handleInspectionRoutes } from './routes-inspections.js';
 import { canAccessInspection } from './inspection-service.js';
+import { generatePendingDocument } from './document-generator.js';
 
 async function handleApi(request, env) {
   const url = new URL(request.url);
@@ -93,6 +94,18 @@ export class InspectionRoom {
     if (url.pathname === '/broadcast' && request.method === 'POST') {
       const event = await request.json();
 
+      if (
+        event?.type === 'inspection_completed' &&
+        Number.isInteger(Number(event.inspectionId)) &&
+        Number.isInteger(Number(event.documentVersion))
+      ) {
+        await this.state.storage.put('pendingDocument', {
+          inspectionId: Number(event.inspectionId),
+          version: Number(event.documentVersion)
+        });
+        await this.state.storage.setAlarm(Date.now() + 1000);
+      }
+
       for (const socket of this.state.getWebSockets()) {
         try {
           socket.send(JSON.stringify(event));
@@ -129,6 +142,29 @@ export class InspectionRoom {
         'sec-websocket-protocol': 'turnstile-inspection'
       }
     });
+  }
+
+  async alarm() {
+    const job = await this.state.storage.get('pendingDocument');
+    if (!job) return;
+
+    try {
+      const result = await generatePendingDocument(
+        this.env,
+        Number(job.inspectionId),
+        Number(job.version)
+      );
+
+      if (result?.status === 'ready' || result?.status === 'missing') {
+        await this.state.storage.delete('pendingDocument');
+        return;
+      }
+
+      await this.state.storage.setAlarm(Date.now() + 3 * 60 * 60 * 1000);
+    } catch (error) {
+      console.error('automatic_document_generation_failed', error);
+      await this.state.storage.setAlarm(Date.now() + 3 * 60 * 60 * 1000);
+    }
   }
 
   webSocketMessage(socket, message) {
