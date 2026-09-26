@@ -151,7 +151,22 @@ export async function getInspectionSummary(env, inspectionId, user) {
 
 export async function listInspections(env, user) {
   let sql = `
-    SELECT DISTINCT i.id,i.title,i.status,i.started_at,i.completed_at,i.created_at
+    SELECT DISTINCT
+      i.id,
+      i.title,
+      i.status,
+      i.started_at,
+      i.completed_at,
+      i.created_at,
+      (
+        SELECT GROUP_CONCAT(gate_no)
+        FROM (
+          SELECT gate_no
+          FROM inspection_gates g2
+          WHERE g2.inspection_id=i.id
+          ORDER BY gate_no
+        )
+      ) AS gate_nos
     FROM inspections i
     LEFT JOIN inspection_gates g ON g.inspection_id=i.id`;
 
@@ -169,7 +184,20 @@ export async function listInspections(env, user) {
 
   sql += ` ORDER BY i.id DESC LIMIT 100`;
 
-  return (await env.DB.prepare(sql).bind(...binds).all()).results || [];
+  const rows = (await env.DB.prepare(sql).bind(...binds).all()).results || [];
+
+  return rows.map(row => ({
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    createdAt: row.created_at,
+    gateNos: String(row.gate_nos || '')
+      .split(',')
+      .map(Number)
+      .filter(Number.isInteger)
+  }));
 }
 
 export async function createInspection(env, user, input) {
