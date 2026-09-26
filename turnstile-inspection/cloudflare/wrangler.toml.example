@@ -7,6 +7,7 @@ compatibility_date = "2026-09-26"
 # Можно перечислить несколько origin через запятую на период миграции.
 ALLOWED_ORIGIN = "https://REPLACE.pages.dev"
 SESSION_TTL_DAYS = "30"
+PUBLIC_APP_URL = "https://REPLACE.pages.dev"
 
 # Публичная часть VAPID-ключа. Приватная хранится только как secret.
 VAPID_PUBLIC_KEY = "REPLACE_VAPID_PUBLIC_KEY"
@@ -34,3 +35,7 @@ new_sqlite_classes = ["InspectionRoom"]
 # PASSWORD_PEPPER     - отдельная случайная строка для паролей
 # BOOTSTRAP_TOKEN     - одноразовая защита первого администратора
 # VAPID_PRIVATE_KEY   - приватная часть ключа Web Push
+
+
+[browser]
+binding = "BROWSER"
