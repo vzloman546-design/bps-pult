@@ -4,6 +4,13 @@ const apiBase = String(process.env.TURNSTILE_API_BASE || '').replace(/\/$/, '');
 const bootstrapToken = String(process.env.TURNSTILE_BOOTSTRAP_TOKEN || '');
 const usersFile = new URL('./users.production.json', import.meta.url);
 
+let passwordMap = {};
+try {
+  passwordMap = JSON.parse(String(process.env.TURNSTILE_USER_PASSWORDS_JSON || '{}'));
+} catch {
+  throw new Error('TURNSTILE_USER_PASSWORDS_JSON must be valid JSON');
+}
+
 if (!apiBase) throw new Error('TURNSTILE_API_BASE is required');
 if (!bootstrapToken) throw new Error('TURNSTILE_BOOTSTRAP_TOKEN is required');
 
@@ -15,9 +22,13 @@ if (!admin || admin.role !== 'admin') {
 }
 
 function passwordFor(user) {
-  const value = String(process.env[user.passwordEnv] || '');
+  const value = String(
+    passwordMap[user.username] ||
+    process.env[user.passwordEnv] ||
+    ''
+  );
   if (value.length < 8) {
-    throw new Error('Missing or too short secret: ' + user.passwordEnv);
+    throw new Error('Missing or too short password for: ' + user.username);
   }
   return value;
 }
