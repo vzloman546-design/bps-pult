@@ -16,6 +16,17 @@ export async function canAccessInspection(env, user, inspectionId) {
 
   if (assigned?.ok) return true;
 
+  const assignment = await env.DB.prepare(
+    `SELECT 1 AS ok
+     FROM assignment_history ah
+     JOIN inspection_gates g ON g.id=ah.inspection_gate_id
+     WHERE g.inspection_id=?
+       AND (ah.from_user_id=? OR ah.to_user_id=?)
+     LIMIT 1`
+  ).bind(inspectionId, user.id, user.id).first();
+
+  if (assignment?.ok) return true;
+
   const participated = await env.DB.prepare(
     `SELECT 1 AS ok
      FROM inspection_events
@@ -76,8 +87,13 @@ export async function getInspectionSummary(env, inspectionId, user) {
           AND e.gate_no=g.gate_no
           AND e.actor_user_id=?
       )
+      OR EXISTS (
+        SELECT 1 FROM assignment_history ah
+        WHERE ah.inspection_gate_id=g.id
+          AND (ah.from_user_id=? OR ah.to_user_id=?)
+      )
     )`;
-    binds.push(user.id, user.id);
+    binds.push(user.id, user.id, user.id, user.id);
   }
 
   sql += ` GROUP BY g.id ORDER BY g.gate_no`;
@@ -299,10 +315,22 @@ export async function getGate(env, inspectionId, gateNo, user) {
   if (user.role !== 'admin' && gate.assignee_user_id !== user.id) {
     const participated = await env.DB.prepare(
       `SELECT 1 AS ok
-       FROM inspection_events
-       WHERE inspection_id=? AND gate_no=? AND actor_user_id=?
+       WHERE EXISTS (
+         SELECT 1 FROM inspection_events
+         WHERE inspection_id=? AND gate_no=? AND actor_user_id=?
+       )
+       OR EXISTS (
+         SELECT 1
+         FROM assignment_history ah
+         JOIN inspection_gates gh ON gh.id=ah.inspection_gate_id
+         WHERE gh.inspection_id=? AND gh.gate_no=?
+           AND (ah.from_user_id=? OR ah.to_user_id=?)
+       )
        LIMIT 1`
-    ).bind(inspectionId, gateNo, user.id).first();
+    ).bind(
+      inspectionId, gateNo, user.id,
+      inspectionId, gateNo, user.id, user.id
+    ).first();
 
     if (!participated?.ok) throw new HttpError(403, 'gate_forbidden');
     readOnly = true;
