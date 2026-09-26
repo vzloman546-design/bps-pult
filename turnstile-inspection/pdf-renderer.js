@@ -500,6 +500,8 @@
   }
 
   window.TeamPdf = {
+    renderPages,
+
     async generate(snapshot) {
       const pages = await renderPages(snapshot);
       const pdfBlob = await buildPdf(pages);
