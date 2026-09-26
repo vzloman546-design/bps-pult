@@ -169,6 +169,19 @@ if [ "$ME_STATUS" != "200" ]; then
   exit 1
 fi
 
+for endpoint in notifications inspections; do
+  STATUS="$(curl -sS -o "/tmp/${endpoint}-response.json" -w '%{http_code}' \
+    "$WORKER_URL/api/$endpoint" \
+    -H "Origin: $PAGES_URL" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" || true)"
+
+  if [ "$STATUS" != "200" ]; then
+    echo "Production authenticated /api/$endpoint failed: HTTP $STATUS" >&2
+    cat "/tmp/${endpoint}-response.json" >&2 || true
+    exit 1
+  fi
+done
+
 echo "Production deployment completed"
 echo "PWA: $PAGES_URL"
 echo "Worker: $WORKER_URL"
