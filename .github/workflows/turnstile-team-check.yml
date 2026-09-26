@@ -1,0 +1,58 @@
+name: Turnstile Team Check
+
+on:
+  push:
+    branches:
+      - feature/turnstile-team-workflow
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: turnstile-inspection
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check browser JavaScript syntax
+        run: |
+          node --check team-config.js
+          node --check team-storage.js
+          node --check team-api.js
+          node --check team-ui.js
+          node --check team-app.js
+          node --check pdf-renderer.js
+          node --check sw.js
+
+      - name: Install Worker dependencies
+        working-directory: turnstile-inspection/cloudflare
+        run: npm install --no-audit --no-fund
+
+      - name: Check Worker JavaScript syntax
+        working-directory: turnstile-inspection/cloudflare
+        run: |
+          node --check src/http.js
+          node --check src/constants.js
+          node --check src/auth.js
+          node --check src/notifications.js
+          node --check src/push.js
+          node --check src/inspection-service.js
+          node --check src/routes-core.js
+          node --check src/routes-inspections.js
+          node --check src/worker.js
+
+      - name: Wrangler build check
+        working-directory: turnstile-inspection/cloudflare
+        run: npx wrangler deploy --dry-run --config wrangler.ci.toml
