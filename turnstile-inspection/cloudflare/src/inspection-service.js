@@ -558,7 +558,7 @@ export async function reopenGate(env, inspectionId, gateNo, actor) {
     ).bind(gate.id),
     env.DB.prepare(
       `UPDATE documents
-       SET status='failed'
+       SET status='superseded'
        WHERE inspection_id=? AND status='pending'`
     ).bind(inspectionId),
     env.DB.prepare(
