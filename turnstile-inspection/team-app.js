@@ -47,7 +47,7 @@
       const section = button.dataset.teamNav;
       const active =
         section === state.route.name ||
-        (section === 'home' && ['gate','inspection','new-inspection','users','notifications'].includes(state.route.name));
+        (section === 'home' && ['gate','inspection','new-inspection','users','notifications','events'].includes(state.route.name));
       button.classList.toggle('active', active);
     });
   }
@@ -782,6 +782,15 @@
         </div>
       </section>
 
+      ${state.user.role === 'admin' ? `
+        <section class="team-card">
+          <h3>Контроль</h3>
+          <div class="team-actions">
+            <button id="inspectionEventsBtn" class="btn secondary" type="button">Журнал действий</button>
+          </div>
+        </section>
+      ` : ''}
+
       ${inspection.document ? `
         <section class="team-card">
           <h3>Акт</h3>
@@ -801,6 +810,11 @@
         </section>
       ` : ''}
     `;
+
+    const eventsButton = document.getElementById('inspectionEventsBtn');
+    if (eventsButton) {
+      eventsButton.onclick = () => route('events', { inspectionId: inspection.id });
+    }
 
     const cancelButton = document.getElementById('cancelInspectionBtn');
     if (cancelButton) {
@@ -892,6 +906,92 @@
     }));
   }
 
+  async function renderEvents() {
+    setChrome({
+      back: true,
+      nav: false,
+      bell: false,
+      context: 'Журнал действий'
+    });
+    loading('Загружаю журнал…');
+
+    const events = await api.events(state.route.inspectionId);
+
+    const labels = {
+      gate_assigned: 'Гейт назначен',
+      gate_reassigned: 'Гейт переназначен',
+      turnstile_updated: 'Изменены данные турникета',
+      gate_status_changed: 'Изменён статус гейта',
+      gate_reopened: 'Гейт переоткрыт',
+      inspection_completed: 'Осмотр завершён',
+      inspection_cancelled: 'Осмотр отменён',
+      document_ready: 'PDF сформирован',
+      document_generation_retry: 'Повторная попытка формирования PDF'
+    };
+
+    function details(event) {
+      if (event.type === 'turnstile_updated') {
+        const changed = event.payload?.changed || {};
+        const names = {
+          visual: 'внешний осмотр',
+          power: 'питание',
+          reader: 'считыватель',
+          status: 'итоговый статус',
+          remarks: 'замечание'
+        };
+        const fields = Object.keys(changed).map(key => names[key] || key);
+        return fields.length ? 'Изменено: ' + fields.join(', ') : '';
+      }
+
+      if (event.type === 'gate_status_changed') {
+        return 'Новый статус: ' + ui.statusLabel(event.payload?.status || '');
+      }
+
+      if (event.type === 'gate_reassigned') {
+        return 'Назначение изменено администратором';
+      }
+
+      if (event.type === 'inspection_completed') {
+        return event.payload?.documentVersion
+          ? 'Создана версия акта №' + event.payload.documentVersion
+          : '';
+      }
+
+      if (event.type === 'document_ready') {
+        return event.payload?.version
+          ? 'PDF версии ' + event.payload.version + ' готов'
+          : '';
+      }
+
+      return '';
+    }
+
+    els.app.innerHTML = `
+      <section class="team-card">
+        <h2>Журнал действий</h2>
+        <p class="help">Хронология действий по этому осмотру. Записи журнала сотрудниками не редактируются.</p>
+        <div class="team-stack">
+          ${events.length ? events.map(event => `
+            <div class="team-history-row">
+              <div class="team-history-top">
+                <strong>${ui.escapeHtml(labels[event.type] || event.type)}</strong>
+                <span class="team-muted">${ui.formatDate(event.createdAt, true)}</span>
+              </div>
+              <div class="team-muted">
+                ${event.gateNo ? event.gateNo + ' гейт' : 'Весь осмотр'}
+                ${event.turnstileCode ? ' · ' + ui.escapeHtml(event.turnstileCode) : ''}
+              </div>
+              <div class="team-muted">
+                ${ui.escapeHtml(event.actorName || 'Система')}
+                ${details(event) ? ' · ' + ui.escapeHtml(details(event)) : ''}
+              </div>
+            </div>
+          `).join('') : '<div class="team-empty"><strong>Записей пока нет</strong></div>'}
+        </div>
+      </section>
+    `;
+  }
+
   async function renderHistory() {
     setChrome({
       back: false,
@@ -971,6 +1071,14 @@
               <div class="team-assignment-main">
                 <div class="team-assignment-title">${ui.escapeHtml(user.displayName)}</div>
                 <div class="team-assignment-meta">@${ui.escapeHtml(user.username)} · ${user.role === 'admin' ? 'Администратор' : 'Сотрудник'}</div>
+                ${user.role !== 'admin' ? `
+                  <div class="team-actions" style="margin-top:9px">
+                    <button class="btn secondary small" type="button" data-reset-user="${ui.escapeHtml(user.id)}">Сменить пароль</button>
+                    <button class="btn ${user.active ? 'warning' : 'success'} small" type="button" data-toggle-user="${ui.escapeHtml(user.id)}" data-user-active="${user.active ? '1' : '0'}">
+                      ${user.active ? 'Отключить' : 'Включить'}
+                    </button>
+                  </div>
+                ` : ''}
               </div>
               <span class="team-chip ${user.active ? 'ok' : 'bad'}">${user.active ? 'Активен' : 'Отключён'}</span>
             </div>
@@ -978,6 +1086,39 @@
         </div>
       </section>
     `;
+
+    els.app.querySelectorAll('[data-toggle-user]').forEach(button => {
+      button.onclick = async () => {
+        const id = button.dataset.toggleUser;
+        const active = button.dataset.userActive !== '1';
+
+        try {
+          await api.updateUser(id, { active });
+          ui.toast(active ? 'Сотрудник включён.' : 'Сотрудник отключён.');
+          renderUsers().catch(handleError);
+        } catch (error) {
+          handleError(error);
+        }
+      };
+    });
+
+    els.app.querySelectorAll('[data-reset-user]').forEach(button => {
+      button.onclick = async () => {
+        const password = window.prompt('Новый пароль сотрудника (минимум 8 символов):');
+        if (password == null) return;
+        if (password.length < 8) {
+          ui.toast('Пароль должен содержать не менее 8 символов.');
+          return;
+        }
+
+        try {
+          await api.updateUser(button.dataset.resetUser, { password });
+          ui.toast('Пароль изменён. Старые сессии сотрудника завершены.');
+        } catch (error) {
+          handleError(error);
+        }
+      };
+    });
 
     document.getElementById('createUserForm').addEventListener('submit', async event => {
       event.preventDefault();
@@ -1112,6 +1253,7 @@
       case 'gate': return renderGate();
       case 'new-inspection': return renderNewInspection();
       case 'inspection': return renderInspection();
+      case 'events': return renderEvents();
       case 'history': return renderHistory();
       case 'users': return renderUsers();
       case 'notifications': return renderNotifications();
@@ -1125,7 +1267,10 @@
   });
 
   els.back.addEventListener('click', () => {
-    if (state.route.name === 'gate' && state.user?.role === 'admin') {
+    if (
+      (state.route.name === 'gate' && state.user?.role === 'admin') ||
+      state.route.name === 'events'
+    ) {
       route('inspection', { inspectionId: state.route.inspectionId });
     } else {
       route('home');
