@@ -28,9 +28,23 @@
   gap: 8px;
 }
 
+#teamBackBtn {
+  grid-column: 1;
+  grid-row: 1;
+}
+
 .team-brand {
+  grid-column: 2;
+  grid-row: 1;
   min-width: 0;
   text-align: center;
+  justify-self: stretch;
+}
+
+#teamBellBtn {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
 }
 
 .team-brand h1 {
