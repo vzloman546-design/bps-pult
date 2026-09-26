@@ -57,6 +57,8 @@ for (const user of config.users || []) {
   );
 }
 
+statements.push(`DELETE FROM auth_throttle;`);
+
 const sql = statements.join('\n');
 
 execFileSync(
