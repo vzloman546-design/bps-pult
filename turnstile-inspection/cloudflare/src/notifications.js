@@ -13,7 +13,9 @@ export async function notifyUser(env, userId, type, title, body, inspectionId = 
     type,
     inspectionId,
     gateNo,
-    url: inspectionId ? `./team.html?inspection=${inspectionId}` : './team.html'
+    url: inspectionId
+      ? `./team.html?inspection=${inspectionId}${gateNo ? `&gate=${gateNo}` : ''}`
+      : './team.html'
   }).catch(error => console.error('push_notification_failed', error));
 }
 
