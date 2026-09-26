@@ -1,17 +1,17 @@
-const CACHE = 'turnstile-inspection-team-v1';
+const CACHE = 'turnstile-inspection-team-v2';
 
 const STATIC_ASSETS = [
   './',
   './index.html',
   './team.html',
   './styles.css?v=12',
-  './team.css?v=1',
+  './team.css?v=2',
   './team-config.js',
-  './team-storage.js',
-  './team-api.js',
-  './team-install.js',
-  './team-ui.js',
-  './team-app.js',
+  './team-storage.js?v=2',
+  './team-api.js?v=2',
+  './team-install.js?v=2',
+  './team-ui.js?v=2',
+  './team-app.js?v=2',
   './pdf-renderer.js',
   './server-print.js',
   './team-manifest.webmanifest',
