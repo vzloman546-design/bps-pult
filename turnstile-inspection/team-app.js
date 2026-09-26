@@ -19,6 +19,8 @@
   const state = {
     user: null,
     route: { name: 'boot' },
+    routeStack: [],
+    skipSingleAssignmentAutoOpen: false,
     realtime: [],
     refreshTimer: null,
     generating: new Set()
@@ -76,9 +78,68 @@
     `;
   }
 
-  function route(name, data = {}) {
+  const ROOT_ROUTES = new Set(['home', 'history', 'profile']);
+
+  function isNavigableRoute(value) {
+    return value?.name && !['boot', 'login'].includes(value.name);
+  }
+
+  function route(name, data = {}, options = {}) {
     closeRealtime();
-    state.route = { name, ...data };
+
+    const next = { name, ...data };
+    const current = state.route;
+
+    if (ROOT_ROUTES.has(name) || options.resetStack) {
+      state.routeStack = [];
+    } else if (options.replace) {
+      // Keep the existing back target and replace only the current screen.
+    } else if (isNavigableRoute(current)) {
+      state.routeStack.push({ ...current });
+      if (state.routeStack.length > 24) state.routeStack.shift();
+    }
+
+    state.route = next;
+    renderRoute().catch(handleError);
+  }
+
+  function fallbackBackRoute() {
+    if (state.route.name === 'gate' && state.user?.role === 'admin') {
+      return {
+        name: 'inspection',
+        inspectionId: state.route.inspectionId
+      };
+    }
+
+    if (state.route.name === 'events') {
+      return {
+        name: 'inspection',
+        inspectionId: state.route.inspectionId
+      };
+    }
+
+    if (['gate','inspection','new-inspection','users','notifications'].includes(state.route.name)) {
+      return { name: 'home' };
+    }
+
+    return null;
+  }
+
+  function goBack() {
+    const current = state.route;
+    const previous = state.routeStack.pop() || fallbackBackRoute();
+    if (!previous) return;
+
+    if (
+      current.name === 'gate' &&
+      previous.name === 'home' &&
+      state.user?.role !== 'admin'
+    ) {
+      state.skipSingleAssignmentAutoOpen = true;
+    }
+
+    closeRealtime();
+    state.route = previous;
     renderRoute().catch(handleError);
   }
 
@@ -145,6 +206,8 @@
     closeRealtime();
     state.user = null;
     state.route = { name: 'login' };
+    state.routeStack = [];
+    state.skipSingleAssignmentAutoOpen = false;
     setChrome({ back: false, nav: false, bell: false, context: '' });
 
     els.app.innerHTML = `
@@ -222,7 +285,7 @@
 
     const assignments = await loadActiveAssignments();
 
-    if (assignments.length === 1) {
+    if (assignments.length === 1 && !state.skipSingleAssignmentAutoOpen) {
       const only = assignments[0];
       route('gate', {
         inspectionId: only.inspection.id,
@@ -231,6 +294,8 @@
       });
       return;
     }
+
+    state.skipSingleAssignmentAutoOpen = false;
 
     const assignmentHtml = assignments.length
       ? assignments.map(({ inspection, gate }) => `
@@ -658,7 +723,7 @@
           gates
         });
         ui.toast('Осмотр создан.');
-        route('inspection', { inspectionId: inspection.id });
+        route('inspection', { inspectionId: inspection.id }, { replace: true });
       } catch (error) {
         handleError(error);
       } finally {
@@ -1338,16 +1403,111 @@
     button.addEventListener('click', () => route(button.dataset.teamNav));
   });
 
-  els.back.addEventListener('click', () => {
-    if (
-      (state.route.name === 'gate' && state.user?.role === 'admin') ||
-      state.route.name === 'events'
-    ) {
-      route('inspection', { inspectionId: state.route.inspectionId });
-    } else {
-      route('home');
+  els.back.addEventListener('click', goBack);
+
+  const swipeBack = {
+    tracking: false,
+    horizontal: false,
+    startX: 0,
+    startY: 0,
+    lastX: 0
+  };
+
+  function resetSwipeBackVisual() {
+    els.app.classList.remove('swipe-back-active', 'swipe-back-settle');
+    els.app.style.transform = '';
+    els.app.style.opacity = '';
+  }
+
+  function canSwipeBack() {
+    return (
+      state.user &&
+      !ROOT_ROUTES.has(state.route.name) &&
+      state.route.name !== 'login' &&
+      !els.back.classList.contains('hidden')
+    );
+  }
+
+  document.addEventListener('touchstart', event => {
+    if (!canSwipeBack() || event.touches.length !== 1) return;
+
+    const touch = event.touches[0];
+    if (touch.clientX > 34) return;
+
+    swipeBack.tracking = true;
+    swipeBack.horizontal = false;
+    swipeBack.startX = touch.clientX;
+    swipeBack.startY = touch.clientY;
+    swipeBack.lastX = touch.clientX;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', event => {
+    if (!swipeBack.tracking || event.touches.length !== 1) return;
+
+    const touch = event.touches[0];
+    const dx = Math.max(0, touch.clientX - swipeBack.startX);
+    const dy = touch.clientY - swipeBack.startY;
+
+    if (!swipeBack.horizontal) {
+      if (Math.abs(dy) > 18 && Math.abs(dy) > dx) {
+        swipeBack.tracking = false;
+        return;
+      }
+
+      if (dx < 8) return;
+      if (dx <= Math.abs(dy) * 1.15) return;
+
+      swipeBack.horizontal = true;
+      els.app.classList.add('swipe-back-active');
     }
-  });
+
+    event.preventDefault();
+    swipeBack.lastX = touch.clientX;
+
+    const width = Math.max(window.innerWidth, 1);
+    const distance = Math.min(dx, width * 0.72);
+    const progress = Math.min(distance / (width * 0.62), 1);
+
+    els.app.style.transform = 'translate3d(' + distance + 'px,0,0)';
+    els.app.style.opacity = String(1 - progress * 0.16);
+  }, { passive: false });
+
+  function finishSwipeBack(cancelled = false) {
+    if (!swipeBack.tracking && !swipeBack.horizontal) return;
+
+    const dx = Math.max(0, swipeBack.lastX - swipeBack.startX);
+    const threshold = Math.min(92, window.innerWidth * 0.22);
+    const shouldGoBack = !cancelled && swipeBack.horizontal && dx >= threshold;
+
+    swipeBack.tracking = false;
+
+    if (!swipeBack.horizontal) {
+      resetSwipeBackVisual();
+      return;
+    }
+
+    swipeBack.horizontal = false;
+    els.app.classList.remove('swipe-back-active');
+    els.app.classList.add('swipe-back-settle');
+
+    if (shouldGoBack) {
+      els.app.style.transform = 'translate3d(' + Math.min(window.innerWidth * 0.34, dx + 42) + 'px,0,0)';
+      els.app.style.opacity = '0.82';
+
+      window.setTimeout(() => {
+        resetSwipeBackVisual();
+        goBack();
+      }, 105);
+      return;
+    }
+
+    els.app.style.transform = 'translate3d(0,0,0)';
+    els.app.style.opacity = '1';
+    window.setTimeout(resetSwipeBackVisual, 190);
+  }
+
+  document.addEventListener('touchend', () => finishSwipeBack(false), { passive: true });
+  document.addEventListener('touchcancel', () => finishSwipeBack(true), { passive: true });
 
   els.bell.addEventListener('click', () => route('notifications'));
 
