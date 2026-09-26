@@ -178,7 +178,6 @@ export async function generatePendingDocument(env, inspectionId, version) {
       },
       waitForSelector: {
         selector: '#pdf-ready',
-        visible: true,
         timeout: 60000
       },
       pdfOptions: {
