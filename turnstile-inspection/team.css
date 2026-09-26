@@ -468,3 +468,25 @@
   background: var(--surface-2);
   outline: none;
 }
+
+
+.team-body {
+  overflow-x: hidden;
+}
+
+.team-main {
+  transform: translate3d(0,0,0);
+  will-change: transform, opacity;
+}
+
+.team-main.swipe-back-active {
+  transition: none !important;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.team-main.swipe-back-settle {
+  transition:
+    transform .18s cubic-bezier(.22,.72,.22,1),
+    opacity .18s ease;
+}
