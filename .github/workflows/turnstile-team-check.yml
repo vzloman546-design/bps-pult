@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - feature/turnstile-team-workflow
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "turnstile-inspection/**"
+      - ".github/workflows/turnstile-team-check.yml"
   workflow_dispatch:
 
 permissions:
