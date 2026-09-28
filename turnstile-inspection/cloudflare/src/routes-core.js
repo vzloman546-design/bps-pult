@@ -316,6 +316,32 @@ export async function handlePushRoutes(request, env, parts, user) {
     return json({ publicKey: vapidPublicKey(env) });
   }
 
+  if (parts[1] === 'status' && request.method === 'GET') {
+    const subscriptions = await env.DB.prepare(
+      `SELECT COUNT(*) AS count
+       FROM push_subscriptions
+       WHERE user_id=? AND active=1`
+    ).bind(user.id).first();
+
+    const latest = await env.DB.prepare(
+      `SELECT status_code,ok,error_text,created_at
+       FROM push_delivery_log
+       WHERE user_id=?
+       ORDER BY id DESC
+       LIMIT 1`
+    ).bind(user.id).first();
+
+    return json({
+      activeSubscriptions: Number(subscriptions?.count || 0),
+      lastDelivery: latest ? {
+        statusCode: latest.status_code,
+        ok: !!latest.ok,
+        error: latest.error_text || null,
+        createdAt: latest.created_at
+      } : null
+    });
+  }
+
   if (parts[1] === 'subscription' && request.method === 'POST') {
     const input = await readJson(request);
     const endpoint = String(input.endpoint || '');
