@@ -145,33 +145,102 @@
     return base.toString();
   }
 
-  function connectRealtime(inspectionId, onEvent) {
-    const session = storage.getSession();
-    if (!session?.token) return null;
-
-    const socket = new WebSocket(
-      realtimeUrl(inspectionId),
-      ['turnstile-inspection', session.token]
-    );
-
+  function connectRealtime(inspectionId, onEvent, onState) {
+    let socket = null;
     let pingTimer = null;
+    let retryTimer = null;
+    let stopped = false;
+    let retryDelay = 900;
 
-    socket.addEventListener('open', () => {
-      pingTimer = setInterval(() => {
-        if (socket.readyState === WebSocket.OPEN) socket.send('ping');
-      }, 25000);
-    });
-
-    socket.addEventListener('message', event => {
-      if (event.data === 'pong') return;
-      try { onEvent?.(JSON.parse(event.data)); } catch {}
-    });
-
-    socket.addEventListener('close', () => {
+    function clearTimers() {
       if (pingTimer) clearInterval(pingTimer);
-    });
+      if (retryTimer) clearTimeout(retryTimer);
+      pingTimer = null;
+      retryTimer = null;
+    }
 
-    return socket;
+    function scheduleReconnect() {
+      if (stopped || !navigator.onLine) return;
+      if (retryTimer) return;
+
+      const delay = retryDelay;
+      retryDelay = Math.min(Math.round(retryDelay * 1.8), 10000);
+
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        open();
+      }, delay);
+    }
+
+    function open() {
+      if (stopped) return;
+
+      const session = storage.getSession();
+      if (!session?.token) return;
+
+      try {
+        socket = new WebSocket(
+          realtimeUrl(inspectionId),
+          ['turnstile-inspection', session.token]
+        );
+      } catch {
+        onState?.('closed');
+        scheduleReconnect();
+        return;
+      }
+
+      onState?.('connecting');
+
+      socket.addEventListener('open', () => {
+        retryDelay = 900;
+        onState?.('open');
+
+        pingTimer = setInterval(() => {
+          if (socket?.readyState === WebSocket.OPEN) {
+            try { socket.send('ping'); } catch {}
+          }
+        }, 20000);
+      });
+
+      socket.addEventListener('message', event => {
+        if (event.data === 'pong') return;
+        try { onEvent?.(JSON.parse(event.data)); } catch {}
+      });
+
+      socket.addEventListener('close', () => {
+        if (pingTimer) clearInterval(pingTimer);
+        pingTimer = null;
+        onState?.('closed');
+        scheduleReconnect();
+      });
+
+      socket.addEventListener('error', () => {
+        onState?.('error');
+      });
+    }
+
+    const controller = {
+      close() {
+        stopped = true;
+        clearTimers();
+        try { socket?.close(); } catch {}
+        socket = null;
+      },
+      reconnect() {
+        if (stopped) return;
+        clearTimers();
+        try { socket?.close(); } catch {}
+        socket = null;
+        retryDelay = 900;
+        open();
+      },
+      get readyState() {
+        return socket?.readyState ?? WebSocket.CLOSED;
+      }
+    };
+
+    open();
+    return controller;
   }
 
   const TeamApi = {
@@ -321,6 +390,19 @@
         async () => (await request('/api/notifications')).notifications || [],
         []
       );
+    },
+
+    async unreadNotificationCount() {
+      return Number((await request('/api/notifications/unread-count')).unread || 0);
+    },
+
+    async markAllNotificationsRead() {
+      const result = await request('/api/notifications/read-all', {
+        method: 'PATCH',
+        json: {}
+      });
+      storage.removeCache('notifications');
+      return result;
     },
 
     markNotificationRead(id) {
