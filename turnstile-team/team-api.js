@@ -23,12 +23,25 @@
 
     if (session?.token) headers.set('authorization', 'Bearer ' + session.token);
 
-    const run = () => fetch(apiUrl(path), {
-      method: options.method || 'GET',
-      headers,
-      body: options.body,
-      cache: 'no-store'
-    });
+    const run = () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 12000);
+
+      return fetch(apiUrl(path), {
+        method: options.method || 'GET',
+        headers,
+        body: options.body,
+        cache: 'no-store',
+        signal: controller.signal
+      }).catch(error => {
+        if (error?.name === 'AbortError') {
+          const timeoutError = new Error('api_timeout');
+          timeoutError.status = 504;
+          throw timeoutError;
+        }
+        throw error;
+      }).finally(() => clearTimeout(timeout));
+    };
 
     let response = await run();
 
