@@ -117,6 +117,20 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id, active);
 
+CREATE TABLE IF NOT EXISTS push_delivery_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subscription_id TEXT,
+  user_id TEXT NOT NULL,
+  status_code INTEGER,
+  ok INTEGER NOT NULL DEFAULT 0 CHECK (ok IN (0,1)),
+  error_text TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (subscription_id) REFERENCES push_subscriptions(id) ON DELETE SET NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_push_delivery_user
+  ON push_delivery_log(user_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS documents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   inspection_id INTEGER NOT NULL,
