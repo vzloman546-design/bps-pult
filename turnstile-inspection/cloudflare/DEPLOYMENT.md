@@ -1,8 +1,8 @@
 # Развёртывание командной версии
 
-Командная PWA развёртывается статически и может одновременно работать с двух frontend-origin:
+Командная PWA развёртывается статически и доступна через два frontend:
 
-- GitHub Pages: `https://vzloman546-design.github.io/bps-pult/`;
+- GitHub Pages: `https://vzloman546-design.github.io/bps-pult/turnstile-team/`;
 - Cloudflare Pages: резервный адрес на время миграции.
 
 Backend, база и realtime пока остаются в Cloudflare. Такой переход позволяет отдельно проверить доступность frontend из российских сетей без риска для существующих учётных записей и данных.
@@ -20,32 +20,24 @@ Backend, база и realtime пока остаются в Cloudflare. Тако�
 
 ## Frontend — GitHub Pages
 
-Публикация выполняется workflow:
+GitHub Pages в репозитории уже публикуется из ветки `main`. Командная PWA не заменяет существующее приложение в корне Pages: готовый bundle помещается в каталог `turnstile-team/`.
+
+Автоматическая цепочка:
+
+1. изменения в `feature/turnstile-team-workflow` проходят `Turnstile Team Check`;
+2. workflow `.github/workflows/turnstile-github-pages-publish.yml`, который хранится в `main`, запускается через `workflow_run` только после успешной push-проверки feature-ветки;
+3. workflow checkout-ит точный проверенный SHA feature-ветки;
+4. запускается `turnstile-inspection/pages-build.sh`;
+5. содержимое `pages-dist` записывается в `main/turnstile-team/`;
+6. штатный GitHub Pages build ветки `main` публикует обновление.
+
+Production URL командной PWA:
 
 ```text
-.github/workflows/turnstile-github-pages-deploy.yml
+https://vzloman546-design.github.io/bps-pult/turnstile-team/
 ```
 
-Он:
-
-1. запускает `turnstile-inspection/pages-build.sh`;
-2. подставляет публичный Worker API в `team-config.js`;
-3. загружает только содержимое `turnstile-inspection/pages-dist`;
-4. публикует его через GitHub Pages.
-
-Ожидаемый production URL:
-
-```text
-https://vzloman546-design.github.io/bps-pult/
-```
-
-Если Pages ещё не включён для репозитория, один раз выберите в GitHub:
-
-```text
-Settings → Pages → Build and deployment → Source → GitHub Actions
-```
-
-После этого дальнейшие публикации выполняются автоматически.
+Все PWA-пути относительные, поэтому manifest, service worker, иконки и переходы работают внутри каталога `/bps-pult/turnstile-team/`.
 
 ## Frontend — Cloudflare Pages
 
@@ -60,14 +52,12 @@ Cloudflare Pages остаётся включённым во время мигр�
 
 ## Worker
 
-Рабочая конфигурация создаётся из `cloudflare/wrangler.toml.example`.
-
 Production-конфигурация автоматически разрешает CORS одновременно для:
 
 - Cloudflare Pages origin;
 - `https://vzloman546-design.github.io`.
 
-Важно: CORS использует origin без пути `/bps-pult/`.
+Важно: CORS использует origin без пути `/bps-pult/turnstile-team/`.
 
 `PUBLIC_APP_URL` пока остаётся адресом Cloudflare Pages, потому что Browser Run использует его для загрузки статических ресурсов при серверной генерации PDF. Это не мешает пользователям открывать саму PWA через GitHub Pages.
 
@@ -92,8 +82,7 @@ node scripts/generate-setup.mjs
 - `SESSION_PEPPER`;
 - `PASSWORD_PEPPER`;
 - `BOOTSTRAP_TOKEN`;
-- `VAPID_PUBLIC_KEY`;
-- `VAPID_PRIVATE_KEY`.
+- VAPID key pair.
 
 Приватные значения передаются в Cloudflare secrets и не сохраняются в репозитории.
 
@@ -105,7 +94,7 @@ node scripts/generate-setup.mjs
 
 ## Проверка GitHub Pages
 
-1. Откройте `https://vzloman546-design.github.io/bps-pult/`.
+1. Откройте `https://vzloman546-design.github.io/bps-pult/turnstile-team/`.
 2. В РФ повторите проверку с выключенным VPN.
 3. Убедитесь, что экран входа загружается.
 4. Выполните вход администратора.
