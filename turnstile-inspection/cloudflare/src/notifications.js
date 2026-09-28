@@ -48,3 +48,22 @@ export async function markNotificationRead(env, userId, notificationId) {
      WHERE id=? AND user_id=?`
   ).bind(notificationId, userId).run();
 }
+
+
+export async function unreadNotificationCount(env, userId) {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS count
+     FROM notifications
+     WHERE user_id=? AND read_at IS NULL`
+  ).bind(userId).first();
+
+  return Number(row?.count || 0);
+}
+
+export async function markAllNotificationsRead(env, userId) {
+  await env.DB.prepare(
+    `UPDATE notifications
+     SET read_at=datetime('now')
+     WHERE user_id=? AND read_at IS NULL`
+  ).bind(userId).run();
+}
