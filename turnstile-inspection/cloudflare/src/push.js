@@ -43,6 +43,24 @@ export function vapidPublicKey(env) {
   return vapidKeys(env)?.publicKey || '';
 }
 
+async function recordPushDelivery(env, row, userId, response, error = null) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO push_delivery_log
+        (subscription_id,user_id,status_code,ok,error_text)
+       VALUES (?,?,?,?,?)`
+    ).bind(
+      row?.id || null,
+      userId,
+      response?.status || null,
+      response?.ok ? 1 : 0,
+      error ? String(error?.message || error).slice(0, 500) : null
+    ).run();
+  } catch (logError) {
+    console.error('push_delivery_log_failed', logError);
+  }
+}
+
 export async function sendPushToUser(env, userId, notification) {
   const vapid = vapidKeys(env);
   if (!vapid) return { delivered: 0, skipped: true };
@@ -69,12 +87,14 @@ export async function sendPushToUser(env, userId, notification) {
       const message = {
         data: JSON.stringify(notification),
         options: {
-          ttl: 60 * 60 * 12
+          ttl: 60 * 60 * 12,
+          urgency: 'high'
         }
       };
 
       const payload = await buildPushPayload(message, subscription, vapid);
       const response = await fetch(subscription.endpoint, payload);
+      await recordPushDelivery(env, row, userId, response);
 
       if (response.ok) {
         delivered++;
@@ -86,6 +106,7 @@ export async function sendPushToUser(env, userId, notification) {
         ).bind(row.id).run();
       }
     } catch (error) {
+      await recordPushDelivery(env, row, userId, null, error);
       console.error('push_send_failed', error);
     }
   }
