@@ -8,7 +8,12 @@ import {
   requireAdmin,
   safeUser
 } from './auth.js';
-import { listNotifications, markNotificationRead } from './notifications.js';
+import {
+  listNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  unreadNotificationCount
+} from './notifications.js';
 import { vapidPublicKey } from './push.js';
 
 export async function handleAuthRoutes(request, env, parts) {
@@ -287,6 +292,15 @@ export async function handleHistoryRoute(request, env, user) {
 export async function handleNotificationRoutes(request, env, parts, user) {
   if (parts.length === 2 && request.method === 'GET') {
     return json({ notifications: await listNotifications(env, user.id) });
+  }
+
+  if (parts.length === 3 && parts[2] === 'unread-count' && request.method === 'GET') {
+    return json({ unread: await unreadNotificationCount(env, user.id) });
+  }
+
+  if (parts.length === 3 && parts[2] === 'read-all' && request.method === 'PATCH') {
+    await markAllNotificationsRead(env, user.id);
+    return json({ ok: true, unread: 0 });
   }
 
   if (parts.length === 3 && request.method === 'PATCH') {
