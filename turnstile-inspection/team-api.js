@@ -443,6 +443,10 @@
       return (await request('/api/push/public-key')).publicKey || '';
     },
 
+    pushStatus() {
+      return request('/api/push/status');
+    },
+
     savePushSubscription(subscription) {
       return request('/api/push/subscription', {
         method: 'POST',
