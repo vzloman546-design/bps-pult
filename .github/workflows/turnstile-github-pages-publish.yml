@@ -9,16 +9,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: turnstile-github-pages-production
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  publish:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (
@@ -28,34 +26,47 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Checkout team PWA branch
+      - name: Checkout tested team PWA source
         uses: actions/checkout@v6
         with:
-          ref: feature/turnstile-team-workflow
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || 'feature/turnstile-team-workflow' }}
+          path: source
 
       - name: Build static PWA
         env:
           TURNSTILE_API_BASE: https://turnstile-inspection-api.vzloman546.workers.dev
         run: |
-          bash turnstile-inspection/pages-build.sh
-          test -f turnstile-inspection/pages-dist/index.html
-          test -f turnstile-inspection/pages-dist/team-config.js
-          test -f turnstile-inspection/pages-dist/sw.js
-          grep -F 'https://turnstile-inspection-api.vzloman546.workers.dev' turnstile-inspection/pages-dist/team-config.js >/dev/null
+          bash source/turnstile-inspection/pages-build.sh
+          test -f source/turnstile-inspection/pages-dist/index.html
+          test -f source/turnstile-inspection/pages-dist/team-config.js
+          test -f source/turnstile-inspection/pages-dist/sw.js
+          grep -F 'https://turnstile-inspection-api.vzloman546.workers.dev' source/turnstile-inspection/pages-dist/team-config.js >/dev/null
 
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload GitHub Pages artifact
-        uses: actions/upload-pages-artifact@v4
+      - name: Checkout GitHub Pages source branch
+        uses: actions/checkout@v6
         with:
-          path: turnstile-inspection/pages-dist
+          ref: main
+          path: site
 
-      - name: Deploy GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Update published team PWA
+        env:
+          TEAM_SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || 'manual' }}
+        run: |
+          rm -rf site/turnstile-team
+          mkdir -p site/turnstile-team
+          cp -a source/turnstile-inspection/pages-dist/. site/turnstile-team/
+
+          cd site
+          git add -A turnstile-team
+
+          if git diff --cached --quiet; then
+            echo "Published files are already current."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Publish team PWA from ${TEAM_SOURCE_SHA}"
+          git push origin HEAD:main
