@@ -23,6 +23,9 @@
     skipSingleAssignmentAutoOpen: false,
     realtime: [],
     refreshTimer: null,
+    livePollTimer: null,
+    bellPollTimer: null,
+    liveSignature: '',
     generating: new Set()
   };
 
@@ -32,6 +35,8 @@
     }
     state.realtime = [];
     clearTimeout(state.refreshTimer);
+    clearInterval(state.livePollTimer);
+    state.livePollTimer = null;
   }
 
   function trackRealtime(socket) {
@@ -152,11 +157,60 @@
   async function refreshBell() {
     if (!state.user) return;
     try {
-      const notifications = await api.notifications();
-      const unread = notifications.filter(item => !item.read_at).length;
+      const unread = await api.unreadNotificationCount();
       els.bellBadge.textContent = String(unread);
       els.bellBadge.classList.toggle('hidden', unread === 0);
     } catch {}
+  }
+
+  function stopBellPolling() {
+    clearInterval(state.bellPollTimer);
+    state.bellPollTimer = null;
+  }
+
+  function startBellPolling() {
+    stopBellPolling();
+    if (!state.user) return;
+
+    state.bellPollTimer = setInterval(() => {
+      if (document.visibilityState === 'visible' && state.user) {
+        refreshBell().catch(() => {});
+      }
+    }, 10000);
+  }
+
+  function inspectionLiveSignature(inspection) {
+    return JSON.stringify({
+      id: inspection?.id,
+      status: inspection?.status,
+      document: inspection?.document
+        ? [inspection.document.version, inspection.document.status, inspection.document.readyAt]
+        : null,
+      gates: (inspection?.gates || []).map(gate => [
+        gate.gateNo,
+        gate.assigneeUserId,
+        gate.status,
+        gate.completed,
+        gate.total
+      ])
+    });
+  }
+
+  function homeLiveSignature(inspections) {
+    return JSON.stringify(
+      (inspections || []).map(inspection => [
+        inspection.id,
+        inspectionLiveSignature(inspection)
+      ])
+    );
+  }
+
+  function startLivePoll(callback, interval = 4000) {
+    clearInterval(state.livePollTimer);
+    state.livePollTimer = setInterval(() => {
+      if (document.visibilityState !== 'visible' || !state.user) return;
+      Promise.resolve(callback()).catch(() => {});
+    }, interval);
   }
 
   async function boot() {
@@ -177,6 +231,7 @@
       state.user = await api.me();
       await api.flushQueue();
       await refreshBell();
+      startBellPolling();
 
       const params = new URLSearchParams(location.search);
       const requestedInspection = Number(params.get('inspection'));
@@ -204,6 +259,7 @@
 
   function showLogin() {
     closeRealtime();
+    stopBellPolling();
     state.user = null;
     state.route = { name: 'login' };
     state.routeStack = [];
@@ -246,6 +302,7 @@
           document.getElementById('loginPassword').value
         );
         await refreshBell();
+        startBellPolling();
         route('home');
       } catch (error) {
         errorBox.textContent = ui.errorMessage(error);
@@ -374,6 +431,8 @@
       active.push(await api.inspection(row.id));
     }
 
+    state.liveSignature = homeLiveSignature(active);
+
     const cards = active.length
       ? active.map(inspection => {
           const progress = inspectionProgress(inspection);
@@ -430,10 +489,28 @@
             if (state.route.name !== 'home') return;
             closeRealtime();
             renderAdminHome().catch(() => {});
-          }, 450);
+          }, 300);
         }
       }));
     }
+
+    startLivePoll(async () => {
+      if (state.route.name !== 'home' || state.user?.role !== 'admin') return;
+
+      const latestRows = await api.inspections();
+      const latestActiveRows = latestRows.filter(item => item.status === 'active');
+      const latestActive = [];
+
+      for (const row of latestActiveRows.slice(0, 10)) {
+        latestActive.push(await api.inspection(row.id));
+      }
+
+      const signature = homeLiveSignature(latestActive);
+      if (signature === state.liveSignature) return;
+
+      closeRealtime();
+      renderAdminHome().catch(() => {});
+    }, 3500);
   }
 
   async function renderHome() {
@@ -782,6 +859,7 @@
     const inspection = await api.inspection(state.route.inspectionId);
     const users = state.user.role === 'admin' ? (await api.users()).filter(user => user.active) : [];
     const progress = inspectionProgress(inspection);
+    state.liveSignature = inspectionLiveSignature(inspection);
 
     els.context.textContent = inspection.title || ('Осмотр №' + inspection.id);
 
@@ -819,13 +897,23 @@
                 ${state.user.role === 'admin' && inspection.status === 'active' && gate.status !== 'completed' ? `
                   <div class="field" style="margin-top:9px">
                     <label>Исполнитель</label>
-                    <select class="select" data-reassign-gate="${gate.gateNo}">
+                    <select
+                      class="select"
+                      data-reassign-gate="${gate.gateNo}"
+                      data-current-assignee="${ui.escapeHtml(gate.assigneeUserId || '')}"
+                    >
                       ${users.map(user => `
                         <option value="${ui.escapeHtml(user.id)}" ${user.id === gate.assigneeUserId ? 'selected' : ''}>
                           ${ui.escapeHtml(user.displayName)}
                         </option>
                       `).join('')}
                     </select>
+                    <button
+                      class="btn secondary small"
+                      type="button"
+                      data-reassign-confirm="${gate.gateNo}"
+                      style="margin-top:8px"
+                    >Переназначить</button>
                   </div>
                 ` : ''}
               </div>
@@ -921,15 +1009,28 @@
       };
     });
 
-    els.app.querySelectorAll('[data-reassign-gate]').forEach(select => {
-      select.addEventListener('change', async () => {
-        const gateNo = Number(select.dataset.reassignGate);
+    els.app.querySelectorAll('[data-reassign-confirm]').forEach(button => {
+      button.addEventListener('click', async () => {
+        const gateNo = Number(button.dataset.reassignConfirm);
+        const select = els.app.querySelector('[data-reassign-gate="' + gateNo + '"]');
+        if (!select) return;
+
+        if (select.value === select.dataset.currentAssignee) {
+          ui.toast('Выбран текущий исполнитель.');
+          return;
+        }
+
+        button.disabled = true;
+        button.textContent = 'Переназначение…';
+
         try {
           await api.assign(inspection.id, gateNo, select.value);
-          ui.toast('Исполнитель изменён.');
-          renderInspection().catch(handleError);
+          ui.toast('Гейт переназначен.');
+          await renderInspection();
         } catch (error) {
           handleError(error);
+          button.disabled = false;
+          button.textContent = 'Переназначить';
         }
       });
     });
@@ -952,13 +1053,30 @@
     }
 
     trackRealtime(api.connectRealtime(inspection.id, event => {
-      if (['gate_progress','gate_reassigned','inspection_completed','document_ready'].includes(event.type)) {
+      if (['gate_progress','gate_reassigned','gate_reopened','inspection_completed','document_ready'].includes(event.type)) {
+        refreshBell().catch(() => {});
         clearTimeout(state.refreshTimer);
         state.refreshTimer = setTimeout(() => {
-          if (state.route.name === 'inspection') renderInspection().catch(() => {});
-        }, 500);
+          if (state.route.name !== 'inspection') return;
+          closeRealtime();
+          renderInspection().catch(() => {});
+        }, 300);
       }
     }));
+
+    startLivePoll(async () => {
+      if (
+        state.route.name !== 'inspection' ||
+        Number(state.route.inspectionId) !== Number(inspection.id)
+      ) return;
+
+      const latest = await api.inspection(inspection.id);
+      const signature = inspectionLiveSignature(latest);
+      if (signature === state.liveSignature) return;
+
+      closeRealtime();
+      renderInspection().catch(() => {});
+    }, 3500);
   }
 
   async function renderEvents() {
@@ -1215,6 +1333,13 @@
     loading('Загружаю уведомления…');
 
     const notifications = await api.notifications();
+    const hadUnread = notifications.some(item => !item.read_at);
+
+    if (hadUnread) {
+      await api.markAllNotificationsRead().catch(() => {});
+      els.bellBadge.textContent = '0';
+      els.bellBadge.classList.add('hidden');
+    }
 
     els.app.innerHTML = `
       <section class="team-card">
@@ -1257,12 +1382,6 @@
         }
       });
     });
-
-    await Promise.all(
-      notifications
-        .filter(item => !item.read_at)
-        .map(item => api.markNotificationRead(item.id).catch(() => {}))
-    );
 
     await refreshBell();
   }
@@ -1329,6 +1448,14 @@
           pushButton.disabled = true;
           pushStatusText.textContent = 'Push-уведомления активны на этом устройстве.';
           api.savePushSubscription(current.subscription).catch(() => {});
+
+          const serverStatus = await api.pushStatus().catch(() => null);
+          if (serverStatus?.lastDelivery) {
+            const last = serverStatus.lastDelivery;
+            pushStatusText.textContent = last.ok
+              ? 'Push активны. Последняя отправка принята push-службой (HTTP ' + last.statusCode + ').'
+              : 'Push активны, но последняя отправка вернула HTTP ' + (last.statusCode || 'ошибку') + '.';
+          }
           return;
         }
 
@@ -1510,6 +1637,14 @@
   document.addEventListener('touchcancel', () => finishSwipeBack(true), { passive: true });
 
   els.bell.addEventListener('click', () => route('notifications'));
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', event => {
+      if (event.data?.type === 'turnstile-push') {
+        refreshBell().catch(() => {});
+      }
+    });
+  }
 
   window.addEventListener('turnstile:session-expired', showLogin);
 
