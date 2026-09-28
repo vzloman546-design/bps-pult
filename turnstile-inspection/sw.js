@@ -1,4 +1,4 @@
-const CACHE = 'turnstile-inspection-team-v6';
+const CACHE = 'turnstile-inspection-team-v7';
 
 const STATIC_ASSETS = [
   './',
@@ -8,10 +8,10 @@ const STATIC_ASSETS = [
   './team.css?v=6',
   './team-config.js',
   './team-storage.js?v=2',
-  './team-api.js?v=3',
+  './team-api.js?v=7',
   './team-install.js?v=2',
   './team-ui.js?v=5',
-  './team-app.js?v=6',
+  './team-app.js?v=7',
   './pdf-renderer.js',
   './server-print.js',
   './team-manifest.webmanifest',
@@ -114,7 +114,7 @@ self.addEventListener('push', event => {
     };
   }
 
-  event.waitUntil(
+  event.waitUntil(Promise.all([
     self.registration.showNotification(
       payload.title || 'Осмотр турникетов',
       {
@@ -124,14 +124,26 @@ self.addEventListener('push', event => {
         tag: payload.type && payload.inspectionId
           ? payload.type + ':' + payload.inspectionId
           : undefined,
+        renotify: true,
         data: {
           url: payload.url || './team.html',
           inspectionId: payload.inspectionId || null,
           gateNo: payload.gateNo || null
         }
       }
-    )
-  );
+    ),
+    clients.matchAll({
+      type: 'window',
+      includeUncontrolled: true
+    }).then(windows => {
+      for (const client of windows) {
+        client.postMessage({
+          type: 'turnstile-push',
+          notification: payload
+        });
+      }
+    })
+  ]));
 });
 
 self.addEventListener('notificationclick', event => {
