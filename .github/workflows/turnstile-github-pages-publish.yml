@@ -1,0 +1,61 @@
+name: Publish Turnstile Team to GitHub Pages
+
+on:
+  workflow_run:
+    workflows:
+      - Turnstile Team Check
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: turnstile-github-pages-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'feature/turnstile-team-workflow'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout team PWA branch
+        uses: actions/checkout@v6
+        with:
+          ref: feature/turnstile-team-workflow
+
+      - name: Build static PWA
+        env:
+          TURNSTILE_API_BASE: https://turnstile-inspection-api.vzloman546.workers.dev
+        run: |
+          bash turnstile-inspection/pages-build.sh
+          test -f turnstile-inspection/pages-dist/index.html
+          test -f turnstile-inspection/pages-dist/team-config.js
+          test -f turnstile-inspection/pages-dist/sw.js
+          grep -F 'https://turnstile-inspection-api.vzloman546.workers.dev' turnstile-inspection/pages-dist/team-config.js >/dev/null
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: turnstile-inspection/pages-dist
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
