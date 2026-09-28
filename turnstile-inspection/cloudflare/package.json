@@ -1,0 +1,18 @@
+{
+  "name": "turnstile-inspection-cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:init": "wrangler d1 execute turnstile-inspection --remote --file=./schema.sql",
+    "generate:setup": "node scripts/generate-setup.mjs",
+    "provision:users": "node scripts/provision-production-users.mjs"
+  },
+  "dependencies": {
+    "@block65/webcrypto-web-push": "2.0.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

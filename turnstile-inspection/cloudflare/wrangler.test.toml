@@ -1,0 +1,30 @@
+name = "turnstile-inspection-api-test"
+main = "src/worker.js"
+compatibility_date = "2026-09-26"
+
+[vars]
+ALLOWED_ORIGIN = "http://127.0.0.1:8787"
+SESSION_TTL_DAYS = "30"
+PUBLIC_APP_URL = "http://127.0.0.1:8787"
+SESSION_PEPPER = "test-session-pepper-only-for-ci"
+PASSWORD_PEPPER = "test-password-pepper-only-for-ci"
+BOOTSTRAP_TOKEN = "test-bootstrap-token"
+VAPID_PUBLIC_KEY = ""
+VAPID_SUBJECT = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "turnstile-inspection-test"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[kv_namespaces]]
+binding = "DOCUMENTS"
+id = "00000000000000000000000000000000"
+
+[[durable_objects.bindings]]
+name = "INSPECTION_ROOM"
+class_name = "InspectionRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["InspectionRoom"]

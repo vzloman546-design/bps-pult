@@ -1,0 +1,36 @@
+name = "turnstile-inspection-api"
+main = "src/worker.js"
+compatibility_date = "2026-09-26"
+
+[vars]
+# После создания Cloudflare Pages здесь будет реальный *.pages.dev origin.
+# Можно перечислить несколько origin через запятую на период миграции.
+ALLOWED_ORIGIN = "https://REPLACE.pages.dev"
+SESSION_TTL_DAYS = "30"
+PUBLIC_APP_URL = "https://REPLACE.pages.dev"
+
+VAPID_SUBJECT = "https://REPLACE.pages.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "turnstile-inspection"
+database_id = "REPLACE_D1_DATABASE_ID"
+
+[[kv_namespaces]]
+binding = "DOCUMENTS"
+id = "REPLACE_KV_NAMESPACE_ID"
+
+[[durable_objects.bindings]]
+name = "INSPECTION_ROOM"
+class_name = "InspectionRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["InspectionRoom"]
+
+# Служебные значения задаются в Cloudflare как Worker secrets.
+# BOOTSTRAP_TOKEN и VAPID_KEYPAIR_JWK не хранятся в репозитории.
+
+
+[browser]
+binding = "BROWSER"

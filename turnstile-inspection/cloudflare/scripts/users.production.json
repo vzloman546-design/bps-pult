@@ -1,0 +1,34 @@
+{
+  "users": [
+    {
+      "role": "admin",
+      "displayName": "Какурин Артем Русланович",
+      "username": "kakur13",
+      "passwordEnv": "TURNSTILE_PASSWORD_KAKUR13"
+    },
+    {
+      "role": "inspector",
+      "displayName": "Водясов Игорь Олегович",
+      "username": "vod13",
+      "passwordEnv": "TURNSTILE_PASSWORD_VOD13"
+    },
+    {
+      "role": "inspector",
+      "displayName": "Громов Олег Евгеньевич",
+      "username": "grom13",
+      "passwordEnv": "TURNSTILE_PASSWORD_GROM13"
+    },
+    {
+      "role": "inspector",
+      "displayName": "Мусатов Игорь Александрович",
+      "username": "musa13",
+      "passwordEnv": "TURNSTILE_PASSWORD_MUSA13"
+    },
+    {
+      "role": "inspector",
+      "displayName": "Радаев Дмитрий Сергеевич",
+      "username": "rad13",
+      "passwordEnv": "TURNSTILE_PASSWORD_RAD13"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+name: Deploy Turnstile Team to Cloudflare
+
+on:
+  push:
+    branches:
+      - feature/turnstile-team-workflow
+    paths:
+      - ".github/workflows/turnstile-cloudflare-deploy.yml"
+      - "turnstile-inspection/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: turnstile-cloudflare-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TURNSTILE_USER_PASSWORDS_JSON: ${{ secrets.TURNSTILE_USER_PASSWORDS_JSON }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify required secrets
+        run: |
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$TURNSTILE_USER_PASSWORDS_JSON"
+
+      - name: Deploy production
+        run: bash turnstile-inspection/cloudflare/scripts/deploy-production.sh
+# trigger ui update
