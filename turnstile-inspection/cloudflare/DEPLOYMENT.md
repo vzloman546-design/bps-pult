@@ -1,6 +1,11 @@
 # Развёртывание командной версии
 
-Эта папка подготовлена так, чтобы после подключения Cloudflare не требовалось менять бизнес-логику приложения.
+Командная PWA развёртывается статически и может одновременно работать с двух frontend-origin:
+
+- GitHub Pages: `https://vzloman546-design.github.io/bps-pult/`;
+- Cloudflare Pages: резервный адрес на время миграции.
+
+Backend, база и realtime пока остаются в Cloudflare. Такой переход позволяет отдельно проверить доступность frontend из российских сетей без риска для существующих учётных записей и данных.
 
 ## Что создаётся в Cloudflare
 
@@ -9,13 +14,42 @@
 - один Workers KV namespace `DOCUMENTS` для готовых PDF;
 - один Durable Object class `InspectionRoom`;
 - один Browser Run binding `BROWSER` для автоматической генерации PDF;
-- один Cloudflare Pages project для PWA.
+- один Cloudflare Pages project как резервный frontend и источник статических ресурсов для Browser Run во время миграции.
 
 Платный Workers plan не требуется.
 
-## Frontend
+## Frontend — GitHub Pages
 
-Cloudflare Pages:
+Публикация выполняется workflow:
+
+```text
+.github/workflows/turnstile-github-pages-deploy.yml
+```
+
+Он:
+
+1. запускает `turnstile-inspection/pages-build.sh`;
+2. подставляет публичный Worker API в `team-config.js`;
+3. загружает только содержимое `turnstile-inspection/pages-dist`;
+4. публикует его через GitHub Pages.
+
+Ожидаемый production URL:
+
+```text
+https://vzloman546-design.github.io/bps-pult/
+```
+
+Если Pages ещё не включён для репозитория, один раз выберите в GitHub:
+
+```text
+Settings → Pages → Build and deployment → Source → GitHub Actions
+```
+
+После этого дальнейшие публикации выполняются автоматически.
+
+## Frontend — Cloudflare Pages
+
+Cloudflare Pages остаётся включённым во время миграции:
 
 - Production branch: `feature/turnstile-team-workflow` до финального merge, затем `main`;
 - Build command: `bash turnstile-inspection/pages-build.sh`;
@@ -28,14 +62,14 @@ Cloudflare Pages:
 
 Рабочая конфигурация создаётся из `cloudflare/wrangler.toml.example`.
 
-Нужно подставить:
+Production-конфигурация автоматически разрешает CORS одновременно для:
 
-- D1 database id;
-- KV namespace id;
-- Pages origin в `ALLOWED_ORIGIN`;
-- тот же Pages URL в `PUBLIC_APP_URL`;
-- публичный VAPID key;
-- VAPID subject.
+- Cloudflare Pages origin;
+- `https://vzloman546-design.github.io`.
+
+Важно: CORS использует origin без пути `/bps-pult/`.
+
+`PUBLIC_APP_URL` пока остаётся адресом Cloudflare Pages, потому что Browser Run использует его для загрузки статических ресурсов при серверной генерации PDF. Это не мешает пользователям открывать саму PWA через GitHub Pages.
 
 Browser Run подключается через:
 
@@ -69,9 +103,23 @@ node scripts/generate-setup.mjs
 
 Сотрудники создаются через интерфейс администратора приложения.
 
+## Проверка GitHub Pages
+
+1. Откройте `https://vzloman546-design.github.io/bps-pult/`.
+2. В РФ повторите проверку с выключенным VPN.
+3. Убедитесь, что экран входа загружается.
+4. Выполните вход администратора.
+5. Проверьте список сотрудников и активный осмотр.
+6. На устройстве сотрудника войдите и откройте назначенный гейт.
+7. Измените один турникет и убедитесь, что изменение видно администратору.
+8. Включите уведомления заново на GitHub Pages origin: Web Push подписка привязана к origin и service worker.
+9. Проверьте запуск установленной PWA после закрытия браузера.
+
+Если шаг 1 работает без VPN, а шаг 4 не работает, значит frontend перенесён успешно, но российская сеть не пропускает `workers.dev`. В этом случае следующим отдельным этапом переносится backend/API.
+
 ## Финальная проверка
 
-Перед переключением production:
+Перед окончательным отключением Cloudflare Pages:
 
 1. вход администратора;
 2. создание тестового сотрудника;

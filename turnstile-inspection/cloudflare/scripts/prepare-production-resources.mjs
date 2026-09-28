@@ -10,6 +10,7 @@ if (!accountId || !token) {
 const D1_NAME = 'turnstile-inspection';
 const KV_TITLE = 'turnstile-inspection-documents';
 const PAGES_PROJECT = 'vzloman546-turnstile-inspection';
+const GITHUB_PAGES_ORIGIN = 'https://vzloman546-design.github.io';
 
 async function cf(path, options = {}, allow404 = false) {
   const response = await fetch('https://api.cloudflare.com/client/v4' + path, {
@@ -104,7 +105,7 @@ compatibility_date = "2026-09-26"
 workers_dev = true
 
 [vars]
-ALLOWED_ORIGIN = "${pagesUrl}"
+ALLOWED_ORIGIN = "${pagesUrl},${GITHUB_PAGES_ORIGIN}"
 SESSION_TTL_DAYS = "30"
 PUBLIC_APP_URL = "${pagesUrl}"
 VAPID_SUBJECT = "${pagesUrl}"
@@ -138,7 +139,8 @@ await writeFile(
     d1Id,
     kvId,
     pagesProject,
-    pagesUrl
+    pagesUrl,
+    githubPagesOrigin: GITHUB_PAGES_ORIGIN
   }, null, 2) + '\n'
 );
 
@@ -146,8 +148,10 @@ await output('d1_id', d1Id);
 await output('kv_id', kvId);
 await output('pages_project', pagesProject);
 await output('pages_url', pagesUrl);
+await output('github_pages_origin', GITHUB_PAGES_ORIGIN);
 
 console.log('Cloudflare resources ready');
 console.log('D1:', D1_NAME);
 console.log('KV:', KV_TITLE);
-console.log('Pages:', pagesUrl);
+console.log('Cloudflare Pages:', pagesUrl);
+console.log('GitHub Pages origin allowed:', GITHUB_PAGES_ORIGIN);
