@@ -546,12 +546,12 @@
           <h2>${gate.gateNo} гейт</h2>
           ${gate.readOnly ? '<div class="team-status-row" style="justify-content:center"><span class="team-chip brand">Только просмотр</span></div>' : ''}
           <div class="gate-summary">
-            <div class="metric"><strong>${completed}</strong><span>заполнено</span></div>
-            <div class="metric"><strong>${ok}</strong><span>исправно</span></div>
-            <div class="metric"><strong>${service}</strong><span>обслуживание</span></div>
-            <div class="metric"><strong>${bad}</strong><span>неисправно</span></div>
+            <div class="metric"><strong id="gateMetricCompleted">${completed}</strong><span>заполнено</span></div>
+            <div class="metric"><strong id="gateMetricOk">${ok}</strong><span>исправно</span></div>
+            <div class="metric"><strong id="gateMetricService">${service}</strong><span>обслуживание</span></div>
+            <div class="metric"><strong id="gateMetricBad">${bad}</strong><span>неисправно</span></div>
           </div>
-          ${ui.progressBar(completed, checks.length)}
+          <div id="gateProgress">${ui.progressBar(completed, checks.length)}</div>
           <div id="gateSync" style="margin-top:8px">${ui.syncLabel()}</div>
         </section>
 
@@ -606,9 +606,99 @@
       if (syncEl) syncEl.innerHTML = ui.syncLabel();
     };
 
+    function isCompleteCheck(check) {
+      if (!check.visual || !check.power || !check.reader || !check.status) return false;
+      if (
+        ['Требует обслуживания','Неисправно'].includes(check.status) &&
+        !String(check.remarks || '').trim()
+      ) return false;
+      return true;
+    }
+
+    function updateGateSummary() {
+      const completeCount = checks.filter(isCompleteCheck).length;
+      const okCount = checks.filter(check => check.status === 'Исправно').length;
+      const serviceCount = checks.filter(check => check.status === 'Требует обслуживания').length;
+      const badCount = checks.filter(check => check.status === 'Неисправно').length;
+
+      const values = {
+        gateMetricCompleted: completeCount,
+        gateMetricOk: okCount,
+        gateMetricService: serviceCount,
+        gateMetricBad: badCount
+      };
+
+      for (const [id, value] of Object.entries(values)) {
+        const element = document.getElementById(id);
+        if (element) element.textContent = String(value);
+      }
+
+      const progress = document.getElementById('gateProgress');
+      if (progress) progress.innerHTML = ui.progressBar(completeCount, checks.length);
+    }
+
+    function syncCheckDom(index, preserveFocused = false) {
+      const check = checks[index];
+      if (!check) return;
+
+      for (const field of ['visual','power','reader','status']) {
+        const input = document.getElementById(field + '-' + index);
+        if (input && (!preserveFocused || document.activeElement !== input)) {
+          const nextValue = String(check[field] || '');
+          if (input.value !== nextValue) input.value = nextValue;
+        }
+      }
+
+      const remarks = document.getElementById('remarks-' + index);
+      if (remarks && (!preserveFocused || document.activeElement !== remarks)) {
+        const nextRemarks = String(check.remarks || '');
+        if (remarks.value !== nextRemarks) remarks.value = nextRemarks;
+      }
+
+      const note = document.getElementById('remark-note-' + index);
+      const needsRemark = ['Требует обслуживания','Неисправно'].includes(check.status);
+      note?.classList.toggle('hidden', !(needsRemark && !String(check.remarks || '').trim()));
+
+      const pill = els.app.querySelector('[data-check-index="' + index + '"] .status-pill');
+      if (pill) {
+        pill.className = 'status-pill ' + ui.statusClass(check.status);
+        pill.textContent = check.status === 'Требует обслуживания'
+          ? 'Обслуживание'
+          : (check.status || 'Не заполнено');
+      }
+    }
+
+    async function refreshGateSilently() {
+      if (
+        state.route.name !== 'gate' ||
+        Number(state.route.inspectionId) !== Number(gate.inspectionId) ||
+        Number(state.route.gateNo) !== Number(gate.gateNo)
+      ) return;
+
+      try {
+        const latest = await api.gate(gate.inspectionId, gate.gateNo);
+        const latestChecks = latest.checks || [];
+
+        for (let index = 0; index < Math.min(checks.length, latestChecks.length); index++) {
+          if (checks[index]?.code !== latestChecks[index]?.code) continue;
+          Object.assign(checks[index], latestChecks[index]);
+          syncCheckDom(index, true);
+        }
+
+        gate.status = latest.status;
+        gate.assigneeUserId = latest.assigneeUserId;
+        gate.assigneeName = latest.assigneeName;
+        gate.readOnly = latest.readOnly;
+        updateGateSummary();
+        updateSync();
+      } catch {}
+    }
+
     async function save(index, patch) {
       if (gate.readOnly) return;
       Object.assign(checks[index], patch);
+      syncCheckDom(index);
+      updateGateSummary();
       updateSync();
 
       try {
@@ -645,13 +735,6 @@
           }
 
           save(index, patch);
-          const pill = els.app.querySelector(`[data-check-index="${index}"] .status-pill`);
-          if (field === 'status' && pill) {
-            pill.className = 'status-pill ' + ui.statusClass(input.value);
-            pill.textContent = input.value === 'Требует обслуживания'
-              ? 'Обслуживание'
-              : (input.value || 'Не заполнено');
-          }
         });
       });
 
@@ -680,7 +763,8 @@
           remarks:''
         };
         await save(index, patch);
-        renderGate().catch(handleError);
+        syncCheckDom(index);
+        updateGateSummary();
       };
     });
 
@@ -694,20 +778,37 @@
           status:'',
           remarks:''
         });
-        renderGate().catch(handleError);
+        syncCheckDom(index);
+        updateGateSummary();
       };
     });
 
     trackRealtime(api.connectRealtime(state.route.inspectionId, event => {
-      if (event.type === 'gate_progress' && event.gateNo === state.route.gateNo) {
+      if (event.type === 'gate_progress' && Number(event.gateNo) === Number(state.route.gateNo)) {
+        clearTimeout(state.refreshTimer);
+        state.refreshTimer = setTimeout(() => {
+          refreshGateSilently();
+        }, 220);
+      }
+
+      if (
+        ['gate_reassigned','gate_reopened','inspection_cancelled'].includes(event.type) &&
+        (!event.gateNo || Number(event.gateNo) === Number(state.route.gateNo))
+      ) {
         clearTimeout(state.refreshTimer);
         state.refreshTimer = setTimeout(() => {
           if (state.route.name === 'gate') renderGate().catch(() => {});
-        }, 600);
+        }, 250);
       }
+
       if (event.type === 'inspection_completed') {
         ui.toast('Все выбранные гейты завершены. Акт формируется автоматически.', 3800);
+        clearTimeout(state.refreshTimer);
+        state.refreshTimer = setTimeout(() => {
+          if (state.route.name === 'gate') renderGate().catch(() => {});
+        }, 500);
       }
+
       if (event.type === 'document_ready') {
         ui.toast('Акт сформирован и готов.');
       }
